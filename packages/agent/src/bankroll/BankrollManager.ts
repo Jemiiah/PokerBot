@@ -100,19 +100,21 @@ export class BankrollManager {
   shouldPlayMatch(
     wagerAmount: bigint,
     estimatedWinProb: number,
-    opponentUnknown: boolean
+    opponentUnknown: boolean,
+    isJoining: boolean = false
   ): { shouldPlay: boolean; reason: string } {
     // Check minimum balance
     if (this.bankrollState.availableBalance < wagerAmount) {
       return { shouldPlay: false, reason: 'Insufficient balance' };
     }
 
-    // Check max risk
+    // Check max risk - be much more lenient when joining existing games (3x buffer for demo)
     const riskPercent = Number(wagerAmount) / Number(this.bankrollState.totalBalance);
-    if (riskPercent > this.maxRiskPercent) {
+    const effectiveMaxRisk = isJoining ? this.maxRiskPercent * 3 : this.maxRiskPercent;
+    if (riskPercent > effectiveMaxRisk) {
       return {
         shouldPlay: false,
-        reason: `Wager exceeds max risk (${(riskPercent * 100).toFixed(1)}% > ${this.maxRiskPercent * 100}%)`,
+        reason: `Wager exceeds max risk (${(riskPercent * 100).toFixed(1)}% > ${effectiveMaxRisk * 100}%)`,
       };
     }
 
@@ -125,13 +127,15 @@ export class BankrollManager {
       };
     }
 
-    // Check session stop-loss
-    if (this.isStopLossHit()) {
+    // Check session stop-loss - but only for creating games, not joining
+    // (If stop-loss hit, we should still be able to play smaller games)
+    if (this.isStopLossHit() && !isJoining) {
       return { shouldPlay: false, reason: 'Session stop-loss reached' };
     }
 
-    // Against unknown opponents, be more conservative
-    if (opponentUnknown && wagerAmount > this.bankrollState.totalBalance / 20n) {
+    // Against unknown opponents, be more conservative - but much more lenient when joining for demo
+    const conservativeThreshold = isJoining ? 5n : 20n;  // Allow up to 20% when joining
+    if (opponentUnknown && wagerAmount > this.bankrollState.totalBalance / conservativeThreshold) {
       return {
         shouldPlay: false,
         reason: 'High wager against unknown opponent',

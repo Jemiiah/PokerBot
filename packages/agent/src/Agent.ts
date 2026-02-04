@@ -259,7 +259,7 @@ export class PokerAgent {
   }
 
   /**
-   * Look for games to join
+   * Look for games to join or create
    */
   private async lookForGames(): Promise<void> {
     // Only look if we don't have too many active games
@@ -267,6 +267,8 @@ export class PokerAgent {
 
     try {
       const activeGames = await this.contract.getActiveGames();
+
+      let foundGameToJoin = false;
 
       for (const gameId of activeGames) {
         // Skip if already in this game
@@ -287,16 +289,22 @@ export class PokerAgent {
           continue;
         }
 
-        // Check if we should join
+        // Check if we should join (pass isJoining=true for more lenient checks)
         const wagerAmount = gameState.players[0].chips;
-        const shouldJoin = this.bankroll.shouldPlayMatch(wagerAmount, 0.5, true);
+        const shouldJoin = this.bankroll.shouldPlayMatch(wagerAmount, 0.5, true, true);
 
         if (shouldJoin.shouldPlay) {
           await this.joinGame(gameId, wagerAmount);
+          foundGameToJoin = true;
           break; // Join one game at a time
         } else {
           logger.debug({ gameId, reason: shouldJoin.reason }, 'Skipping game');
         }
+      }
+
+      // If no games to join and we have no active games, create one
+      if (!foundGameToJoin && this.activeGames.size === 0) {
+        await this.maybeCreateGame();
       }
     } catch (error) {
       logger.error({ error }, 'Error looking for games');
@@ -304,10 +312,37 @@ export class PokerAgent {
   }
 
   /**
+   * Maybe create a new game if conditions are right
+   */
+  private async maybeCreateGame(): Promise<void> {
+    // Get current balance
+    const balance = await this.wallet.getBalance();
+    this.bankroll.updateBalance(balance);
+
+    // Wager 5% of balance, minimum 0.00001 ETH
+    const minWager = 10000000000000n; // 0.00001 ETH
+    const wagerAmount = balance / 20n; // 5% of balance
+
+    // Need at least minimum wager
+    if (wagerAmount < minWager) {
+      logger.debug({ balance: balance.toString(), wager: wagerAmount.toString() }, 'Balance too low to create game');
+      return;
+    }
+
+    logger.info({ wager: wagerAmount.toString(), balance: balance.toString() }, 'Attempting to create game');
+
+    try {
+      await this.createGame(wagerAmount);
+    } catch (error) {
+      logger.error({ error }, 'Failed to create game');
+    }
+  }
+
+  /**
    * Create a new game
    */
   async createGame(wagerAmount: bigint): Promise<string | null> {
-    const shouldCreate = this.bankroll.shouldPlayMatch(wagerAmount, 0.5, true);
+    const shouldCreate = this.bankroll.shouldPlayMatch(wagerAmount, 0.5, true, false);
     if (!shouldCreate.shouldPlay) {
       logger.warn({ reason: shouldCreate.reason }, 'Cannot create game');
       return null;
