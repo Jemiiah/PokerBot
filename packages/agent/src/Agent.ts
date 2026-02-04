@@ -1,5 +1,6 @@
 import type { Card, HoleCards } from '@poker/shared';
 import { indexToCard } from '@poker/shared';
+import WebSocket from 'ws';
 import { WalletManager, ContractClient } from './blockchain/index.js';
 import { StrategyEngine } from './strategy/index.js';
 import { OpponentModel } from './opponent/index.js';
@@ -7,6 +8,9 @@ import { BankrollManager } from './bankroll/index.js';
 import { config, createChildLogger } from './utils/index.js';
 
 const logger = createChildLogger('Agent');
+
+// Coordinator WebSocket URL
+const COORDINATOR_WS_URL = process.env.COORDINATOR_WS_URL || 'ws://localhost:8080/ws';
 
 interface ActiveGame {
   gameId: `0x${string}`;
@@ -39,6 +43,8 @@ export class PokerAgent {
 
   private activeGames: Map<string, ActiveGame> = new Map();
   private isRunning: boolean = false;
+  private coordinatorWs: WebSocket | null = null;
+  private coordinatorReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     logger.info({ name: config.agentName }, 'Initializing poker agent');
@@ -55,6 +61,9 @@ export class PokerAgent {
    */
   async start(): Promise<void> {
     logger.info('Starting poker agent');
+
+    // Connect to coordinator for thought relay
+    this.connectToCoordinator();
 
     // Get initial balance
     const balance = await this.wallet.getBalance();
@@ -81,8 +90,114 @@ export class PokerAgent {
     logger.info('Stopping poker agent');
     this.isRunning = false;
 
+    // Close coordinator connection
+    if (this.coordinatorReconnectTimer) {
+      clearTimeout(this.coordinatorReconnectTimer);
+      this.coordinatorReconnectTimer = null;
+    }
+    if (this.coordinatorWs) {
+      this.coordinatorWs.close();
+      this.coordinatorWs = null;
+    }
+
     // Log summary
     logger.info(this.bankroll.getSummary());
+  }
+
+  /**
+   * Connect to coordinator WebSocket for thought relay
+   */
+  private connectToCoordinator(): void {
+    try {
+      this.coordinatorWs = new WebSocket(COORDINATOR_WS_URL);
+
+      this.coordinatorWs.on('open', () => {
+        logger.info({ url: COORDINATOR_WS_URL }, 'Connected to coordinator');
+        // Register with coordinator
+        this.coordinatorWs?.send(
+          JSON.stringify({
+            type: 'register',
+            address: this.wallet.address,
+          })
+        );
+      });
+
+      this.coordinatorWs.on('message', (data) => {
+        try {
+          const message = JSON.parse(data.toString());
+          if (message.type === 'pong') {
+            // Heartbeat response
+          } else if (message.type === 'registered') {
+            logger.info('Registered with coordinator');
+          }
+        } catch (error) {
+          logger.error({ error }, 'Failed to parse coordinator message');
+        }
+      });
+
+      this.coordinatorWs.on('close', () => {
+        logger.warn('Disconnected from coordinator');
+        this.coordinatorWs = null;
+        // Reconnect after delay if still running
+        if (this.isRunning) {
+          this.coordinatorReconnectTimer = setTimeout(() => {
+            logger.info('Reconnecting to coordinator...');
+            this.connectToCoordinator();
+          }, 5000);
+        }
+      });
+
+      this.coordinatorWs.on('error', (error) => {
+        logger.error({ error }, 'Coordinator WebSocket error');
+      });
+    } catch (error) {
+      logger.error({ error }, 'Failed to connect to coordinator');
+      // Retry after delay
+      if (this.isRunning) {
+        this.coordinatorReconnectTimer = setTimeout(() => {
+          this.connectToCoordinator();
+        }, 5000);
+      }
+    }
+  }
+
+  /**
+   * Send thought/reasoning to coordinator for frontend display
+   */
+  private sendThoughtToCoordinator(
+    gameId: string,
+    decision: {
+      action: string;
+      amount?: bigint;
+      reasoning: string;
+      confidence?: number;
+    },
+    extra?: {
+      equity?: number;
+      potOdds?: number;
+    }
+  ): void {
+    if (!this.coordinatorWs || this.coordinatorWs.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      this.coordinatorWs.send(
+        JSON.stringify({
+          type: 'agent_thought',
+          gameId,
+          agentAddress: this.wallet.address,
+          action: decision.action,
+          amount: decision.amount?.toString(),
+          reasoning: decision.reasoning,
+          confidence: decision.confidence,
+          equity: extra?.equity,
+          potOdds: extra?.potOdds,
+        })
+      );
+    } catch (error) {
+      logger.error({ error }, 'Failed to send thought to coordinator');
+    }
   }
 
   /**
@@ -297,6 +412,33 @@ export class PokerAgent {
         reasoning: decision.reasoning,
       },
       'Taking action'
+    );
+
+    // Send thought to coordinator for frontend display
+    const potOdds = toCall > 0n ? Number(toCall) / (Number(gameState.pot) + Number(toCall)) : 0;
+
+    // Calculate equity for display (postflop only)
+    let equity: number | undefined;
+    if (communityCards.length > 0) {
+      equity = this.strategy.getEquityCalculator().calculateEquity(
+        holeCards,
+        communityCards,
+        200 // Quick simulation for display
+      );
+    }
+
+    this.sendThoughtToCoordinator(
+      activeGame.gameId,
+      {
+        action: decision.action,
+        amount: decision.amount,
+        reasoning: decision.reasoning,
+        confidence: decision.confidence,
+      },
+      {
+        equity,
+        potOdds,
+      }
     );
 
     // Record opponent's last action for modeling

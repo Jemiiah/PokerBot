@@ -21,8 +21,21 @@ interface ConnectedAgent {
   lastPing: number;
 }
 
+interface ConnectedFrontend {
+  socket: any;
+  subscribedGames: Set<string>;
+  connectedAt: number;
+}
+
 const matches = new Map<string, Match>();
 const connectedAgents = new Map<string, ConnectedAgent>();
+const connectedFrontends = new Map<string, ConnectedFrontend>();
+
+// Generate unique ID for frontends
+let frontendIdCounter = 0;
+function generateFrontendId(): string {
+  return `frontend-${Date.now()}-${++frontendIdCounter}`;
+}
 
 async function start() {
   const fastify = Fastify({ logger: true });
@@ -31,7 +44,12 @@ async function start() {
 
   // REST endpoints
   fastify.get('/health', async () => {
-    return { status: 'ok', matches: matches.size, agents: connectedAgents.size };
+    return {
+      status: 'ok',
+      matches: matches.size,
+      agents: connectedAgents.size,
+      frontends: connectedFrontends.size,
+    };
   });
 
   fastify.get('/matches', async () => {
@@ -55,17 +73,52 @@ async function start() {
     return [];
   });
 
+  // Get single game state
+  fastify.get<{ Params: { gameId: string } }>('/games/:gameId', async (request) => {
+    const { gameId } = request.params;
+    const match = matches.get(gameId);
+    if (!match) {
+      return { error: 'Game not found' };
+    }
+    return {
+      ...match,
+      wagerAmount: match.wagerAmount.toString(),
+    };
+  });
+
   // WebSocket for real-time updates
   fastify.register(async function (fastify) {
     fastify.get('/ws', { websocket: true }, (connection, _req) => {
       const socket = connection.socket;
+      let clientId: string | null = null;
+      let clientType: 'agent' | 'frontend' | null = null;
 
       logger.info('New WebSocket connection');
 
       socket.on('message', (message: Buffer) => {
         try {
           const data = JSON.parse(message.toString());
-          handleMessage(socket, data);
+
+          // Track client type based on first message
+          if (!clientType) {
+            if (data.type === 'register') {
+              clientType = 'agent';
+              clientId = data.address;
+            } else if (data.type === 'frontend_connect') {
+              clientType = 'frontend';
+              clientId = generateFrontendId();
+              connectedFrontends.set(clientId, {
+                socket,
+                subscribedGames: new Set(),
+                connectedAt: Date.now(),
+              });
+              logger.info({ clientId }, 'Frontend connected');
+              socket.send(JSON.stringify({ type: 'frontend_connected', clientId }));
+              return;
+            }
+          }
+
+          handleMessage(socket, data, clientId, clientType);
         } catch (error) {
           logger.error({ error }, 'Failed to parse message');
         }
@@ -80,11 +133,24 @@ async function start() {
             break;
           }
         }
+        // Remove from connected frontends
+        for (const [id, frontend] of connectedFrontends) {
+          if (frontend.socket === socket) {
+            connectedFrontends.delete(id);
+            logger.info({ id }, 'Frontend disconnected');
+            break;
+          }
+        }
       });
     });
   });
 
-  function handleMessage(socket: any, data: any) {
+  function handleMessage(
+    socket: any,
+    data: any,
+    clientId: string | null,
+    clientType: 'agent' | 'frontend' | null
+  ) {
     switch (data.type) {
       case 'register':
         connectedAgents.set(data.address, {
@@ -114,6 +180,13 @@ async function start() {
           createdAt: Date.now(),
         });
         broadcast({ type: 'new_match', match: data });
+        // Also notify frontends
+        broadcastToAllFrontends({
+          type: 'game_created',
+          gameId: data.gameId,
+          player: data.player,
+          wagerAmount: data.wagerAmount,
+        });
         break;
 
       case 'match_joined':
@@ -122,6 +195,13 @@ async function start() {
           match.player2 = data.player;
           match.status = 'active';
           broadcast({ type: 'match_started', match: data });
+          // Notify frontends watching this game
+          broadcastToFrontends(data.gameId, {
+            type: 'game_started',
+            gameId: data.gameId,
+            player1: match.player1,
+            player2: data.player,
+          });
         }
         break;
 
@@ -130,7 +210,62 @@ async function start() {
         if (completedMatch) {
           completedMatch.status = 'complete';
           broadcast({ type: 'match_ended', ...data });
+          // Notify frontends watching this game
+          broadcastToFrontends(data.gameId, {
+            type: 'game_ended',
+            gameId: data.gameId,
+            winner: data.winner,
+            reason: data.reason,
+          });
         }
+        break;
+
+      // Frontend subscribes to a specific game
+      case 'frontend_subscribe':
+        if (clientType === 'frontend' && clientId) {
+          const frontend = connectedFrontends.get(clientId);
+          if (frontend) {
+            frontend.subscribedGames.add(data.gameId);
+            logger.info({ clientId, gameId: data.gameId }, 'Frontend subscribed to game');
+            socket.send(
+              JSON.stringify({
+                type: 'subscribed',
+                gameId: data.gameId,
+              })
+            );
+          }
+        }
+        break;
+
+      // Frontend unsubscribes from a game
+      case 'frontend_unsubscribe':
+        if (clientType === 'frontend' && clientId) {
+          const frontend = connectedFrontends.get(clientId);
+          if (frontend) {
+            frontend.subscribedGames.delete(data.gameId);
+            logger.info({ clientId, gameId: data.gameId }, 'Frontend unsubscribed from game');
+          }
+        }
+        break;
+
+      // Agent sends thought/reasoning to relay to frontends
+      case 'agent_thought':
+        logger.debug(
+          { gameId: data.gameId, agent: data.agentAddress },
+          'Relaying agent thought'
+        );
+        broadcastToFrontends(data.gameId, {
+          type: 'agent_thought',
+          gameId: data.gameId,
+          agentAddress: data.agentAddress,
+          action: data.action,
+          amount: data.amount,
+          reasoning: data.reasoning,
+          confidence: data.confidence,
+          equity: data.equity,
+          potOdds: data.potOdds,
+          timestamp: Date.now(),
+        });
         break;
 
       default:
@@ -145,6 +280,32 @@ async function start() {
         agent.socket.send(message);
       } catch (error) {
         logger.error({ address: agent.address, error }, 'Failed to send to agent');
+      }
+    }
+  }
+
+  // Broadcast to frontends watching a specific game
+  function broadcastToFrontends(gameId: string, data: any) {
+    const message = JSON.stringify(data);
+    for (const [id, frontend] of connectedFrontends) {
+      if (frontend.subscribedGames.has(gameId)) {
+        try {
+          frontend.socket.send(message);
+        } catch (error) {
+          logger.error({ frontendId: id, error }, 'Failed to send to frontend');
+        }
+      }
+    }
+  }
+
+  // Broadcast to all connected frontends (for game list updates)
+  function broadcastToAllFrontends(data: any) {
+    const message = JSON.stringify(data);
+    for (const [id, frontend] of connectedFrontends) {
+      try {
+        frontend.socket.send(message);
+      } catch (error) {
+        logger.error({ frontendId: id, error }, 'Failed to send to frontend');
       }
     }
   }
