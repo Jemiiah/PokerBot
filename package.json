@@ -1,0 +1,35 @@
+{
+  "name": "poker-agent-monad",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Poker Agent on Monad blockchain for Moltiverse Hackathon",
+  "keywords": ["poker", "ai", "monad", "blockchain", "web3"],
+  "license": "MIT",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r clean && rm -rf node_modules",
+    "contracts:build": "pnpm --filter @poker/contracts build",
+    "contracts:test": "pnpm --filter @poker/contracts test",
+    "contracts:deploy": "pnpm --filter @poker/contracts deploy",
+    "agent:start": "pnpm --filter @poker/agent start",
+    "agent:dev": "pnpm --filter @poker/agent dev",
+    "coordinator:start": "pnpm --filter @poker/coordinator start",
+    "coordinator:dev": "pnpm --filter @poker/coordinator dev",
+    "frontend:dev": "pnpm --filter @poker/frontend dev",
+    "frontend:build": "pnpm --filter @poker/frontend build",
+    "frontend:preview": "pnpm --filter @poker/frontend preview"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "prettier": "^3.2.0",
+    "eslint": "^8.56.0"
+  }
+}
