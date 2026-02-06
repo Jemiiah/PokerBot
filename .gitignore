@@ -38,3 +38,18 @@ coverage/
 # Misc
 *.pem
 .turbo/
+
+# Environment files with secrets
+.env.shadow
+.env.storm
+.env.sage
+.env.ember
+.env.blaze
+.env.frost
+.env.viper
+.env.titan
+.env.local
+.env.production
+
+# Railway
+.railway

@@ -2,7 +2,9 @@ import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'path';
 
 // Load environment variables
-dotenvConfig({ path: resolve(process.cwd(), '../../.env') });
+// First try DOTENV_CONFIG_PATH if set, then fall back to ../../.env
+const envPath = process.env.DOTENV_CONFIG_PATH || resolve(process.cwd(), '../../.env');
+dotenvConfig({ path: envPath });
 
 export interface AgentConfig {
   // Network
@@ -26,6 +28,11 @@ export interface AgentConfig {
   maxWagerPercent: number;
   kellyFraction: number;
   timeoutSeconds: number;
+
+  // Personality/LLM settings
+  openaiApiKey: string | null;
+  personalityName: string;
+  agentMode: 'live' | 'demo';
 
   // Logging
   logLevel: string;
@@ -66,6 +73,11 @@ export function loadConfig(): AgentConfig {
     maxWagerPercent: parseFloat(getEnvOrDefault('MAX_WAGER_PERCENT', '5')),
     kellyFraction: parseFloat(getEnvOrDefault('KELLY_FRACTION', '0.25')),
     timeoutSeconds: parseInt(getEnvOrDefault('TIMEOUT_SECONDS', '60')),
+
+    // Personality/LLM settings
+    openaiApiKey: process.env.OPENAI_API_KEY || null,
+    personalityName: getEnvOrDefault('AGENT_PERSONALITY', 'Blaze'),
+    agentMode: (getEnvOrDefault('AGENT_MODE', 'live') as 'live' | 'demo'),
 
     // Logging
     logLevel: getEnvOrDefault('LOG_LEVEL', 'info'),

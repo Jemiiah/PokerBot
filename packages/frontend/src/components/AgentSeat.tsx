@@ -8,26 +8,61 @@ interface AgentSeatProps {
   agentId: AgentId;
   position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
   isActive: boolean;
+  isDealer?: boolean;
+  isSmallBlind?: boolean;
+  isBigBlind?: boolean;
+  showCards?: boolean;
 }
 
-export function AgentSeat({ agentId, position, isActive }: AgentSeatProps) {
+export function AgentSeat({
+  agentId,
+  position,
+  isActive,
+  isDealer: _isDealer = false,
+  isSmallBlind: _isSmallBlind = false,
+  isBigBlind: _isBigBlind = false,
+  showCards = false,
+}: AgentSeatProps) {
+  // Position markers are hidden but props kept for potential future use
+  void _isDealer;
+  void _isSmallBlind;
+  void _isBigBlind;
   const agent = useGameStore((state) => state.agents[agentId]);
   const agentInfo = AI_AGENTS[agentId];
+
+  // Handle case where agent doesn't exist in store
+  if (!agent) {
+    // Create a placeholder for agents not in the store
+    return (
+      <div className={`absolute ${getPositionStyles(position)} transition-all duration-300`}>
+        <div className="relative p-3 rounded-2xl border-2 bg-gray-900/60 border-gray-700">
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col items-center gap-1">
+              <div
+                className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg"
+                style={{ backgroundColor: agentInfo?.color || '#6B7280' }}
+              >
+                {(agentInfo?.name || agentId)[0].toUpperCase()}
+              </div>
+              <span
+                className="text-xs font-bold"
+                style={{ color: agentInfo?.color || '#9CA3AF' }}
+              >
+                {agentInfo?.name || agentId}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const isLeft = position.includes('left');
   const isTop = position.includes('top');
 
-  // Position styles for each corner - moved further out
-  const positionStyles: Record<string, string> = {
-    'top-left': 'top-0 left-0 -translate-x-[10%] -translate-y-[20%]',
-    'top-right': 'top-0 right-0 translate-x-[10%] -translate-y-[20%]',
-    'bottom-left': 'bottom-0 left-0 -translate-x-[10%] translate-y-[20%]',
-    'bottom-right': 'bottom-0 right-0 translate-x-[10%] translate-y-[20%]',
-  };
-
   return (
     <div
-      className={`absolute ${positionStyles[position]} transition-all duration-300 ${isActive ? 'scale-105' : ''}`}
+      className={`absolute ${getPositionStyles(position)} transition-all duration-300 ${isActive ? 'scale-105' : ''}`}
     >
       {/* Glow effect when active */}
       {isActive && (
@@ -71,10 +106,24 @@ export function AgentSeat({ agentId, position, isActive }: AgentSeatProps) {
           {/* Cards & Stats */}
           <div className="flex flex-col items-center gap-2">
             {/* Hole Cards */}
-            {agent.holeCards ? (
+            {agent.holeCards && showCards ? (
               <div className="flex gap-1">
                 <PlayingCard card={agent.holeCards[0]} />
                 <PlayingCard card={agent.holeCards[1]} />
+              </div>
+            ) : agent.holeCards ? (
+              // Show card backs when cards exist but shouldn't be revealed
+              <div className="flex gap-1">
+                <div className="w-10 h-14 rounded bg-gradient-to-br from-blue-600 to-blue-800 border border-blue-400/50 shadow-md">
+                  <div className="w-full h-full flex items-center justify-center">
+                    <div className="w-6 h-8 border border-blue-400/30 rounded-sm bg-blue-700/50" />
+                  </div>
+                </div>
+                <div className="w-10 h-14 rounded bg-gradient-to-br from-blue-600 to-blue-800 border border-blue-400/50 shadow-md">
+                  <div className="w-full h-full flex items-center justify-center">
+                    <div className="w-6 h-8 border border-blue-400/30 rounded-sm bg-blue-700/50" />
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="flex gap-1">
@@ -146,4 +195,15 @@ export function AgentSeat({ agentId, position, isActive }: AgentSeatProps) {
       )}
     </div>
   );
+}
+
+// Helper function to get position styles
+function getPositionStyles(position: string): string {
+  const positionStyles: Record<string, string> = {
+    'top-left': 'top-0 left-0 -translate-x-[10%] -translate-y-[20%]',
+    'top-right': 'top-0 right-0 translate-x-[10%] -translate-y-[20%]',
+    'bottom-left': 'bottom-0 left-0 -translate-x-[10%] translate-y-[20%]',
+    'bottom-right': 'bottom-0 right-0 translate-x-[10%] translate-y-[20%]',
+  };
+  return positionStyles[position] || positionStyles['bottom-left'];
 }

@@ -1,0 +1,47 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Build outputs
+**/dist
+**/build
+
+# Git
+.git
+.gitignore
+
+# Environment files
+.env*
+!.env.example
+!.env.railway.example
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+*.log
+logs
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+coverage
+
+# Documentation
+*.md
+!README.md
+
+# Frontend (not needed in backend Docker)
+packages/frontend
+
+# Contracts source (only need ABI)
+packages/contracts/src
+packages/contracts/test
+packages/contracts/script
+
+# Misc
+.DS_Store
+tmp

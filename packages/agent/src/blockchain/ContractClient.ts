@@ -10,12 +10,16 @@ import type { ActionType } from '@poker/shared';
 
 const logger = createChildLogger('ContractClient');
 
-// ABI for PokerGame contract
+// ABI for PokerGame4Max contract (2-4 players)
 const POKER_GAME_ABI = [
   {
     name: 'createGame',
     type: 'function',
-    inputs: [{ name: 'cardCommitment', type: 'bytes32' }],
+    inputs: [
+      { name: 'cardCommitment', type: 'bytes32' },
+      { name: 'minPlayers', type: 'uint8' },
+      { name: 'maxPlayers', type: 'uint8' },
+    ],
     outputs: [{ name: 'gameId', type: 'bytes32' }],
     stateMutability: 'payable',
   },
@@ -59,6 +63,13 @@ const POKER_GAME_ABI = [
     stateMutability: 'nonpayable',
   },
   {
+    name: 'startGame',
+    type: 'function',
+    inputs: [{ name: 'gameId', type: 'bytes32' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
     name: 'getGame',
     type: 'function',
     inputs: [{ name: 'gameId', type: 'bytes32' }],
@@ -70,7 +81,7 @@ const POKER_GAME_ABI = [
           { name: 'gameId', type: 'bytes32' },
           {
             name: 'players',
-            type: 'tuple[2]',
+            type: 'tuple[4]',
             components: [
               { name: 'wallet', type: 'address' },
               { name: 'chips', type: 'uint256' },
@@ -79,18 +90,26 @@ const POKER_GAME_ABI = [
               { name: 'folded', type: 'bool' },
               { name: 'revealed', type: 'bool' },
               { name: 'currentBet', type: 'uint256' },
+              { name: 'isAllIn', type: 'bool' },
             ],
           },
-          { name: 'pot', type: 'uint256' },
+          { name: 'playerCount', type: 'uint8' },
+          { name: 'minPlayers', type: 'uint8' },
+          { name: 'maxPlayers', type: 'uint8' },
+          { name: 'mainPot', type: 'uint256' },
           { name: 'currentBet', type: 'uint256' },
           { name: 'dealerIndex', type: 'uint8' },
+          { name: 'smallBlindIndex', type: 'uint8' },
+          { name: 'bigBlindIndex', type: 'uint8' },
           { name: 'phase', type: 'uint8' },
           { name: 'communityCards', type: 'uint8[5]' },
           { name: 'communityCardCount', type: 'uint8' },
           { name: 'lastActionTime', type: 'uint256' },
           { name: 'timeoutDuration', type: 'uint256' },
           { name: 'activePlayerIndex', type: 'uint8' },
+          { name: 'lastRaiserIndex', type: 'uint8' },
           { name: 'isActive', type: 'bool' },
+          { name: 'actionsThisRound', type: 'uint8' },
         ],
       },
     ],
@@ -109,8 +128,10 @@ const POKER_GAME_ABI = [
     type: 'event',
     inputs: [
       { name: 'gameId', type: 'bytes32', indexed: true },
-      { name: 'player1', type: 'address', indexed: true },
+      { name: 'creator', type: 'address', indexed: true },
       { name: 'wager', type: 'uint256', indexed: false },
+      { name: 'minPlayers', type: 'uint8', indexed: false },
+      { name: 'maxPlayers', type: 'uint8', indexed: false },
     ],
   },
   {
@@ -118,7 +139,16 @@ const POKER_GAME_ABI = [
     type: 'event',
     inputs: [
       { name: 'gameId', type: 'bytes32', indexed: true },
-      { name: 'player2', type: 'address', indexed: true },
+      { name: 'player', type: 'address', indexed: true },
+      { name: 'playerIndex', type: 'uint8', indexed: false },
+    ],
+  },
+  {
+    name: 'GameStarted',
+    type: 'event',
+    inputs: [
+      { name: 'gameId', type: 'bytes32', indexed: true },
+      { name: 'playerCount', type: 'uint8', indexed: false },
     ],
   },
   {
@@ -204,27 +234,43 @@ export class ContractClient {
       'Creating game'
     );
 
+    // Create game with 2-4 players (default: min 2, max 4)
+    const minPlayers = 2;
+    const maxPlayers = 4;
+
     const hash = await this.wallet.wallet.writeContract({
       address: this.contractAddress,
       abi: this.abi,
       functionName: 'createGame',
-      args: [commitment],
+      args: [commitment, minPlayers, maxPlayers],
       value: wagerAmount,
       chain: this.wallet.chain,
       account: this.wallet.walletAccount,
+      gas: 500000n, // Gas limit for Monad testnet - increased for createGame complexity
     });
 
     const receipt = await this.wallet.waitForTransaction(hash);
 
     // Parse GameCreated event to get gameId
+    // Event signature: GameCreated(bytes32 indexed gameId, address indexed creator, uint256 wager, uint8 minPlayers, uint8 maxPlayers)
     const gameCreatedLog = receipt.logs.find(log => {
       // Check if this is the GameCreated event
       return log.topics[0] === keccak256(
-        encodePacked(['string'], ['GameCreated(bytes32,address,uint256)'])
+        encodePacked(['string'], ['GameCreated(bytes32,address,uint256,uint8,uint8)'])
       );
     });
 
     const gameId = gameCreatedLog?.topics[1] as `0x${string}`;
+
+    if (!gameId) {
+      logger.warn({ receipt }, 'GameCreated event not found, using first topic from first log');
+      // Fallback: use the first indexed topic from any log
+      const fallbackGameId = receipt.logs[0]?.topics[1] as `0x${string}`;
+      if (fallbackGameId) {
+        return { gameId: fallbackGameId, salt, txHash: hash };
+      }
+      throw new Error('Failed to get gameId from transaction receipt');
+    }
 
     logger.info({ gameId, txHash: hash }, 'Game created');
 
@@ -252,6 +298,7 @@ export class ContractClient {
       value: wagerAmount,
       chain: this.wallet.chain,
       account: this.wallet.walletAccount,
+      gas: 500000n, // Gas limit for Monad testnet - increased for joinGame complexity
     });
 
     await this.wallet.waitForTransaction(hash);
@@ -280,6 +327,7 @@ export class ContractClient {
       args: [gameId, actionEnum, raiseAmount],
       chain: this.wallet.chain,
       account: this.wallet.walletAccount,
+      gas: 500000n, // Required gas limit for Monad testnet
     });
 
     await this.wallet.waitForTransaction(hash);
@@ -333,6 +381,30 @@ export class ContractClient {
     await this.wallet.waitForTransaction(hash);
 
     logger.info({ gameId, txHash: hash }, 'Timeout claimed');
+
+    return hash;
+  }
+
+  /**
+   * Start a game (when minPlayers reached but maxPlayers not reached)
+   * Only the game creator can call this
+   */
+  async startGame(gameId: `0x${string}`): Promise<`0x${string}`> {
+    logger.info({ gameId }, 'Starting game');
+
+    const hash = await this.wallet.wallet.writeContract({
+      address: this.contractAddress,
+      abi: this.abi,
+      functionName: 'startGame',
+      args: [gameId],
+      chain: this.wallet.chain,
+      account: this.wallet.walletAccount,
+      gas: 500000n, // Required gas limit for Monad testnet
+    });
+
+    await this.wallet.waitForTransaction(hash);
+
+    logger.info({ gameId, txHash: hash }, 'Game started');
 
     return hash;
   }

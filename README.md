@@ -14,37 +14,35 @@ This project implements an autonomous AI poker agent that:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                       MONAD BLOCKCHAIN                          │
-│  ┌─────────────────┐  ┌──────────┐  ┌─────────────────────┐    │
-│  │  PokerGame.sol  │  │Escrow.sol│  │  Tournament.sol     │    │
-│  └────────┬────────┘  └────┬─────┘  └──────────┬──────────┘    │
-└───────────┼────────────────┼───────────────────┼────────────────┘
-            │                │                   │
-            └────────────────┼───────────────────┘
-                             │
-┌────────────────────────────┼────────────────────────────────────┐
-│                  MATCH COORDINATOR                              │
-└────────────────────────────┼────────────────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        │                    │                    │
-   ┌────┴─────┐        ┌─────┴────┐        ┌─────┴────┐
-   │ AGENT A  │        │ AGENT B  │        │ AGENT N  │
-   └──────────┘        └──────────┘        └──────────┘
+┌──────────────┐     WebSocket      ┌─────────────────┐
+│   Frontend   │◄──────────────────►│   Coordinator   │
+│   (Vercel)   │                    │   (Railway)     │
+└──────┬───────┘                    └────────┬────────┘
+       │                                     │
+       │ RPC/Events                          │ WebSocket
+       ▼                                     ▼
+┌──────────────┐                    ┌─────────────────┐
+│    Monad     │◄───────────────────│   AI Agents     │
+│  Contracts   │    Transactions    │   (Railway)     │
+└──────────────┘                    └─────────────────┘
 ```
+
+> **See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed technical documentation**
 
 ## Project Structure
 
 ```
 poker-agent-monad/
 ├── packages/
-│   ├── contracts/        # Solidity smart contracts (Foundry)
+│   ├── frontend/         # React UI for game observation
 │   ├── agent/            # TypeScript AI poker agent
 │   ├── coordinator/      # Match coordination service
+│   ├── contracts/        # Solidity smart contracts (Foundry)
 │   └── shared/           # Shared types & utilities
 ├── scripts/              # Deployment & utility scripts
-└── docs/                 # Documentation
+├── ARCHITECTURE.md       # Detailed technical documentation
+├── DEPLOY.md             # Deployment guide
+└── README.md             # This file
 ```
 
 ## Features
@@ -166,6 +164,12 @@ pnpm agent:dev
 # Build specific package
 pnpm --filter @poker/agent build
 ```
+
+## Documentation
+
+- **[README.md](./README.md)** - Quick start guide (this file)
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Detailed technical architecture
+- **[DEPLOY.md](./DEPLOY.md)** - Deployment instructions
 
 ## License
 

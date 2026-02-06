@@ -22,13 +22,13 @@ interface BettingStore {
   betHistory: Bet[];
 
   // Odds for each agent (dynamic based on game state)
-  odds: Record<AgentId, number>;
+  odds: Partial<Record<AgentId, number>>;
 
   // Actions
   placeBet: (agentId: AgentId, amount: number) => boolean;
   resolveBets: (winnerId: AgentId) => void;
   clearCurrentBets: () => void;
-  updateOdds: (odds: Record<AgentId, number>) => void;
+  updateOdds: (odds: Partial<Record<AgentId, number>>) => void;
   addBalance: (amount: number) => void;
 }
 
@@ -81,7 +81,7 @@ export const useBettingStore = create<BettingStore>((set, get) => ({
 
     const resolvedBets = currentBets.map((bet) => {
       const won = bet.agentId === winnerId;
-      const payout = won ? bet.amount * odds[bet.agentId] : 0;
+      const payout = won ? bet.amount * (odds[bet.agentId] ?? 2.5) : 0;
 
       return {
         ...bet,

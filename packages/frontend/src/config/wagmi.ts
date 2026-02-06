@@ -11,19 +11,41 @@ declare global {
       on: (event: string, handler: (...args: unknown[]) => void) => void;
       removeListener: (event: string, handler: (...args: unknown[]) => void) => void;
     };
+    // Note: ethereum is typed as 'any' in other libs, so we use any here
   }
+}
+
+// Get the OKX wallet provider - it can be injected in different ways
+function getOKXProvider() {
+  if (typeof window === 'undefined') return undefined;
+
+  // Check for window.okxwallet (direct injection)
+  if ((window as any).okxwallet) {
+    return (window as any).okxwallet;
+  }
+
+  // Check for window.ethereum with isOkxWallet flag
+  if ((window as any).ethereum?.isOkxWallet) {
+    return (window as any).ethereum;
+  }
+
+  // Fallback to window.ethereum (might be OKX or other wallet)
+  if ((window as any).ethereum) {
+    return (window as any).ethereum;
+  }
+
+  return undefined;
 }
 
 export const wagmiConfig = createConfig({
   chains: [monadTestnet],
   connectors: [
-    // Use injected connector with OKX wallet's provider specifically
+    // Use injected connector - will auto-detect available wallet
     injected({
       target: {
         id: 'okxWallet',
         name: 'OKX Wallet',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        provider: () => (window as any).okxwallet,
+        provider: getOKXProvider,
       },
     }),
   ],

@@ -1,7 +1,7 @@
 import { useGameStore } from '../stores/gameStore';
 import { useBettingStore } from '../stores/bettingStore';
-import type { Card, AgentId, ActionType } from '../lib/constants';
-import { AI_AGENTS, SUITS, RANKS, SMALL_BLIND, BIG_BLIND, ACTION_DELAY_MS, THINKING_DELAY_MS } from '../lib/constants';
+import type { Card, ActionType, DemoAgentId } from '../lib/constants';
+import { AI_AGENTS, SUITS, RANKS, SMALL_BLIND, BIG_BLIND, ACTION_DELAY_MS, THINKING_DELAY_MS, DEMO_AGENT_IDS } from '../lib/constants';
 
 // Deck management
 let deck: Card[] = [];
@@ -30,18 +30,25 @@ function dealCards(count: number): Card[] {
 }
 
 // Mock AI decision making
-function makeAIDecision(agentId: AgentId, gameState: ReturnType<typeof useGameStore.getState>): {
+function makeAIDecision(agentId: DemoAgentId, gameState: ReturnType<typeof useGameStore.getState>): {
   action: ActionType;
   amount: number;
   thought: DetailedThought;
 } {
   const agent = gameState.agents[agentId];
+  if (!agent) {
+    return {
+      action: 'fold',
+      amount: 0,
+      thought: { text: 'Agent not found', analysis: '', confidence: 'low', emoji: '?' }
+    };
+  }
   const { currentBet, pot } = gameState;
   const toCall = currentBet - agent.currentBet;
   const canCheck = toCall === 0;
 
   // Each AI has a slightly different personality
-  const personalities: Record<AgentId, { aggression: number; bluffFreq: number }> = {
+  const personalities: Record<DemoAgentId, { aggression: number; bluffFreq: number }> = {
     claude: { aggression: 0.4, bluffFreq: 0.15 }, // Thoughtful, balanced
     chatgpt: { aggression: 0.5, bluffFreq: 0.2 }, // Analytical, adaptive
     grok: { aggression: 0.7, bluffFreq: 0.35 }, // Bold, unpredictable
@@ -56,11 +63,11 @@ function makeAIDecision(agentId: AgentId, gameState: ReturnType<typeof useGameSt
   let action: ActionType;
   let amount = 0;
 
-  if (agent.chips <= 0) {
+  if (!agent || agent.chips <= 0) {
     return {
       action: 'fold',
       amount: 0,
-      thought: { text: 'I have no chips left.', analysis: 'Stack depleted.', confidence: 'high', emoji: '💸' }
+      thought: { text: 'I have no chips left.', analysis: 'Stack depleted.', confidence: 'high', emoji: '' }
     };
   }
 
@@ -92,12 +99,15 @@ interface DetailedThought {
 }
 
 function generateDetailedThought(
-  agentId: AgentId,
+  agentId: DemoAgentId,
   action: ActionType,
   gameState: ReturnType<typeof useGameStore.getState>,
   handStrength: number
 ): DetailedThought {
   const agent = gameState.agents[agentId];
+  if (!agent) {
+    return { text: 'Thinking...', analysis: '', confidence: 'low', emoji: '' };
+  }
   const { pot, currentBet, phase, communityCards } = gameState;
   const toCall = currentBet - agent.currentBet;
 
@@ -110,7 +120,7 @@ function generateDetailedThought(
   const avgOpponentBet = opponents.reduce((sum, o) => sum + o.currentBet, 0) / Math.max(opponentCount, 1);
 
   // Card descriptions
-  const cardDesc = agent.holeCards
+  const cardDesc = agent?.holeCards
     ? `${agent.holeCards[0].rank}${agent.holeCards[0].suit[0]} ${agent.holeCards[1].rank}${agent.holeCards[1].suit[0]}`
     : 'unknown';
 
@@ -119,7 +129,7 @@ function generateDetailedThought(
     : 'no board yet';
 
   // Personality-based thoughts with context
-  const thoughts: Record<AgentId, Record<string, () => DetailedThought>> = {
+  const thoughts: Record<DemoAgentId, Record<string, () => DetailedThought>> = {
     claude: {
       check: () => ({
         text: handStrength > 0.5
@@ -149,9 +159,9 @@ function generateDetailedThought(
       }),
       all_in: () => ({
         text: "All factors align. Maximum commitment is the optimal play.",
-        analysis: `Strong holding of ${cardDesc} on ${boardDesc}. With ${agent.chips} behind, shoving maximizes fold equity and value.`,
+        analysis: `Strong holding of ${cardDesc} on ${boardDesc}. With ${agent?.chips ?? 0} behind, shoving maximizes fold equity and value.`,
         confidence: 'high',
-        emoji: '🚀',
+        emoji: '',
       }),
     },
     chatgpt: {
@@ -214,10 +224,10 @@ function generateDetailedThought(
         emoji: '😤',
       }),
       all_in: () => ({
-        text: "ALL IN!!! THIS IS WHAT POKER IS ALL ABOUT! WITNESS ME!!! 🔥🔥🔥",
-        analysis: `${cardDesc}?! ${boardDesc}?! WHO CARES! ${agent.chips} chips in the middle! LET'S GOOOOO!!!`,
+        text: "ALL IN!!! THIS IS WHAT POKER IS ALL ABOUT! WITNESS ME!!!",
+        analysis: `${cardDesc}?! ${boardDesc}?! WHO CARES! ${agent?.chips ?? 0} chips in the middle! LET'S GOOOOO!!!`,
         confidence: 'high',
-        emoji: '🎪',
+        emoji: '',
       }),
     },
     deepseek: {
@@ -247,9 +257,9 @@ function generateDetailedThought(
       }),
       all_in: () => ({
         text: "All-in executed. Nash equilibrium calculation complete.",
-        analysis: `${cardDesc} maximally leveraged on ${boardDesc}. ICM/chip EV both favor commitment. ${agent.chips} chips deployed.`,
+        analysis: `${cardDesc} maximally leveraged on ${boardDesc}. ICM/chip EV both favor commitment. ${agent?.chips ?? 0} chips deployed.`,
         confidence: 'high',
-        emoji: '🔬',
+        emoji: '',
       }),
     },
   };
@@ -264,10 +274,10 @@ function generateDetailedThought(
 }
 
 // Get active agents in order
-function getActiveAgents(): AgentId[] {
+function getActiveAgents(): DemoAgentId[] {
   const state = useGameStore.getState();
-  return (['deepseek', 'chatgpt', 'grok', 'claude'] as AgentId[]).filter(
-    (id) => state.agents[id].isActive && !state.agents[id].folded
+  return DEMO_AGENT_IDS.filter(
+    (id) => state.agents[id]?.isActive && !state.agents[id]?.folded
   );
 }
 
@@ -278,6 +288,12 @@ export function startGameLoop() {
   const store = useGameStore.getState();
   if (store.isRunning) return;
 
+  // Only start demo game if we're in demo mode
+  if (store.mode !== 'demo') {
+    console.log('[GameEngine] Cannot start demo game - not in demo mode');
+    return;
+  }
+
   store.startGame();
   runHand();
 }
@@ -286,13 +302,19 @@ async function runHand() {
   const store = useGameStore.getState();
   if (!store.isRunning || store.isPaused) return;
 
+  // Stop demo game if we've switched to live mode
+  if (store.mode !== 'demo') {
+    console.log('[GameEngine] Stopping demo game - mode switched to live');
+    stopGameLoop();
+    return;
+  }
+
   // Start new hand
   store.startNewHand();
   deck = shuffleDeck(createDeck());
 
   // Deal hole cards to all agents
-  const agentIds: AgentId[] = ['deepseek', 'chatgpt', 'grok', 'claude'];
-  for (const agentId of agentIds) {
+  for (const agentId of DEMO_AGENT_IDS) {
     const cards = dealCards(2) as [Card, Card];
     store.dealHoleCards(agentId, cards);
     await delay(300);
@@ -356,6 +378,12 @@ async function runHand() {
 
 async function runBettingRound() {
   const store = useGameStore.getState();
+
+  // Stop if we've switched to live mode
+  if (store.mode !== 'demo') {
+    return;
+  }
+
   const activeAgents = getActiveAgents();
 
   // Reset current bets for new round (except preflop blinds)
@@ -373,6 +401,11 @@ async function runBettingRound() {
     const state = useGameStore.getState();
     if (!state.isRunning || state.isPaused) return;
 
+    // Stop if mode changed to live during betting
+    if (state.mode !== 'demo') {
+      return;
+    }
+
     const activeNow = getActiveAgents();
     if (activeNow.length <= 1) break;
 
@@ -380,7 +413,7 @@ async function runBettingRound() {
     const agentId = activeNow[currentIndex];
     const agent = state.agents[agentId];
 
-    if (agent.folded || agent.isAllIn) {
+    if (!agent || agent.folded || agent.isAllIn) {
       currentIndex++;
       continue;
     }
@@ -417,7 +450,8 @@ async function runBettingRound() {
 
     // Execute action
     const currentState = useGameStore.getState();
-    const toCall = currentState.currentBet - currentState.agents[agentId].currentBet;
+    const currentAgent = currentState.agents[agentId];
+    const toCall = currentState.currentBet - (currentAgent?.currentBet ?? 0);
 
     switch (decision.action) {
       case 'fold':
@@ -447,7 +481,7 @@ async function runBettingRound() {
     const updatedActive = getActiveAgents();
     const allMatched = updatedActive.every((id) => {
       const a = useGameStore.getState().agents[id];
-      return a.folded || a.isAllIn || a.currentBet === useGameStore.getState().currentBet;
+      return !a || a.folded || a.isAllIn || a.currentBet === useGameStore.getState().currentBet;
     });
 
     if (allMatched && actionsThisRound >= updatedActive.length) {
@@ -468,10 +502,10 @@ function countActivePlayers(): number {
 async function endHandWithWinner() {
   const state = useGameStore.getState();
   const activePlayers = Object.entries(state.agents)
-    .filter(([_, a]) => a.isActive && !a.folded)
-    .map(([id]) => id as AgentId);
+    .filter(([_, a]) => a && a.isActive && !a.folded)
+    .map(([id]) => id as DemoAgentId);
 
-  let winnerId: AgentId;
+  let winnerId: DemoAgentId;
   let winningHand = '';
 
   if (activePlayers.length === 1) {
@@ -494,12 +528,12 @@ async function endHandWithWinner() {
 function updateWinProbabilities() {
   const state = useGameStore.getState();
   const active = Object.entries(state.agents)
-    .filter(([_, a]) => a.isActive && !a.folded)
-    .map(([id]) => id as AgentId);
+    .filter(([_, a]) => a && a.isActive && !a.folded)
+    .map(([id]) => id as DemoAgentId);
 
   // Mock probability calculation
   const total = active.length;
-  const probabilities: Record<AgentId, number> = {
+  const probabilities: Record<DemoAgentId, number> = {
     claude: 0,
     chatgpt: 0,
     grok: 0,
@@ -514,13 +548,13 @@ function updateWinProbabilities() {
   // Normalize to 100%
   const sum = Object.values(probabilities).reduce((a, b) => a + b, 0);
   Object.keys(probabilities).forEach((id) => {
-    const agentId = id as AgentId;
+    const agentId = id as DemoAgentId;
     probabilities[agentId] = Math.floor((probabilities[agentId] / sum) * 100);
     state.updateAgent(agentId, { winProbability: probabilities[agentId] });
   });
 
   // Update betting odds based on probabilities
-  const odds: Record<AgentId, number> = {
+  const odds: Partial<Record<DemoAgentId, number>> = {
     claude: probabilities.claude > 0 ? +(100 / probabilities.claude).toFixed(1) : 10,
     chatgpt: probabilities.chatgpt > 0 ? +(100 / probabilities.chatgpt).toFixed(1) : 10,
     grok: probabilities.grok > 0 ? +(100 / probabilities.grok).toFixed(1) : 10,
@@ -532,6 +566,11 @@ function updateWinProbabilities() {
 function scheduleNextHand() {
   const state = useGameStore.getState();
   if (!state.isRunning || state.isPaused) return;
+
+  // Don't schedule next hand if we've switched to live mode
+  if (state.mode !== 'demo') {
+    return;
+  }
 
   // Check if any agent is out of chips
   const activePlayers = Object.values(state.agents).filter((a) => a.chips > 0);

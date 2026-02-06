@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Card, AgentId, GamePhase } from '../lib/constants';
-import { AI_AGENTS, STARTING_CHIPS } from '../lib/constants';
+import { AI_AGENTS, STARTING_CHIPS, LIVE_AGENT_IDS, DEMO_AGENT_IDS } from '../lib/constants';
 
 export interface AgentThought {
   text: string;
@@ -28,6 +28,7 @@ export interface GameEvent {
   timestamp: Date;
   type: 'action' | 'phase' | 'winner' | 'system' | 'thought';
   agentId?: AgentId;
+  agentName?: string;
   message: string;
   details?: string;
 }
@@ -38,11 +39,15 @@ export interface GameState {
   isPaused: boolean;
   phase: GamePhase;
   handNumber: number;
+  mode: 'demo' | 'live';
 
-  // Agents
-  agents: Record<AgentId, AgentState>;
+  // Agents - supports all 12 possible agents (8 live + 4 demo)
+  agents: Partial<Record<AgentId, AgentState>>;
   activeAgentId: AgentId | null;
   dealerIndex: number;
+
+  // Active players in current game (for live mode)
+  activePlayers: AgentId[];
 
   // Table state
   pot: number;
@@ -63,6 +68,7 @@ interface GameStore extends GameState {
   pauseGame: () => void;
   resumeGame: () => void;
   resetGame: () => void;
+  setMode: (mode: 'demo' | 'live') => void;
 
   // Game logic
   setPhase: (phase: GamePhase) => void;
@@ -70,6 +76,7 @@ interface GameStore extends GameState {
   updateAgent: (agentId: AgentId, updates: Partial<AgentState>) => void;
   dealHoleCards: (agentId: AgentId, cards: [Card, Card]) => void;
   addCommunityCards: (cards: Card[]) => void;
+  setActivePlayers: (players: AgentId[]) => void;
 
   // Betting
   placeBet: (agentId: AgentId, amount: number) => void;
@@ -83,11 +90,14 @@ interface GameStore extends GameState {
   // End hand
   endHand: (winnerId: AgentId, winningHand?: string) => void;
   startNewHand: () => void;
+
+  // Initialize agent (for live mode dynamic agents)
+  initializeAgent: (agentId: AgentId, chips?: number) => void;
 }
 
-const createInitialAgentState = (id: AgentId): AgentState => ({
+const createInitialAgentState = (id: AgentId, chips = STARTING_CHIPS): AgentState => ({
   id,
-  chips: STARTING_CHIPS,
+  chips,
   holeCards: null,
   currentBet: 0,
   totalBet: 0,
@@ -99,19 +109,34 @@ const createInitialAgentState = (id: AgentId): AgentState => ({
   currentThought: null,
 });
 
+// Create initial agents for demo mode (4 demo agents)
+const createDemoAgents = (): Partial<Record<AgentId, AgentState>> => {
+  const agents: Partial<Record<AgentId, AgentState>> = {};
+  for (const id of DEMO_AGENT_IDS) {
+    agents[id] = createInitialAgentState(id);
+  }
+  return agents;
+};
+
+// Create initial agents for live mode (8 live agents)
+const createLiveAgents = (): Partial<Record<AgentId, AgentState>> => {
+  const agents: Partial<Record<AgentId, AgentState>> = {};
+  for (const id of LIVE_AGENT_IDS) {
+    agents[id] = createInitialAgentState(id);
+  }
+  return agents;
+};
+
 const initialState: GameState = {
   isRunning: false,
   isPaused: false,
   phase: 'waiting',
   handNumber: 0,
-  agents: {
-    claude: createInitialAgentState('claude'),
-    chatgpt: createInitialAgentState('chatgpt'),
-    grok: createInitialAgentState('grok'),
-    deepseek: createInitialAgentState('deepseek'),
-  },
+  mode: 'demo',
+  agents: createDemoAgents(),
   activeAgentId: null,
   dealerIndex: 0,
+  activePlayers: [],
   pot: 0,
   currentBet: 0,
   communityCards: [],
@@ -134,14 +159,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
   resumeGame: () => set({ isPaused: false }),
 
   resetGame: () => {
+    const mode = get().mode;
     set({
       ...initialState,
-      agents: {
-        claude: createInitialAgentState('claude'),
-        chatgpt: createInitialAgentState('chatgpt'),
-        grok: createInitialAgentState('grok'),
-        deepseek: createInitialAgentState('deepseek'),
-      },
+      mode,
+      agents: mode === 'live' ? createLiveAgents() : createDemoAgents(),
+    });
+  },
+
+  setMode: (mode) => {
+    // Clear events when switching modes to prevent mixing demo/live data
+    set({
+      mode,
+      agents: mode === 'live' ? createLiveAgents() : createDemoAgents(),
+      activePlayers: [],
+      events: [], // Clear events on mode switch
+      pot: 0,
+      currentBet: 0,
+      communityCards: [],
+      phase: 'waiting',
+      isRunning: false,
+      isPaused: false,
+      winnerId: null,
+      winningHand: null,
     });
   },
 
@@ -163,12 +203,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setActiveAgent: (agentId) => set({ activeAgentId: agentId }),
 
   updateAgent: (agentId, updates) => {
-    set((state) => ({
-      agents: {
-        ...state.agents,
-        [agentId]: { ...state.agents[agentId], ...updates },
-      },
-    }));
+    const state = get();
+    const existingAgent = state.agents[agentId];
+
+    if (!existingAgent) {
+      // Auto-initialize agent if it doesn't exist
+      const newAgent = createInitialAgentState(agentId);
+      set({
+        agents: {
+          ...state.agents,
+          [agentId]: { ...newAgent, ...updates },
+        },
+      });
+    } else {
+      set({
+        agents: {
+          ...state.agents,
+          [agentId]: { ...existingAgent, ...updates },
+        },
+      });
+    }
   },
 
   dealHoleCards: (agentId, cards) => {
@@ -181,9 +235,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }));
   },
 
+  setActivePlayers: (players) => {
+    set({ activePlayers: players });
+    // Ensure all active players have agent state
+    for (const playerId of players) {
+      const state = get();
+      if (!state.agents[playerId]) {
+        get().initializeAgent(playerId);
+      }
+    }
+  },
+
   placeBet: (agentId, amount) => {
     const state = get();
     const agent = state.agents[agentId];
+    if (!agent) return;
+
     const actualBet = Math.min(amount, agent.chips);
     const isAllIn = actualBet >= agent.chips;
     const actionName = isAllIn ? 'all in' : amount > state.currentBet - agent.currentBet ? 'raise' : 'call';
@@ -204,31 +271,38 @@ export const useGameStore = create<GameStore>((set, get) => ({
       },
     }));
 
+    const agentInfo = AI_AGENTS[agentId];
     get().addEvent({
       type: 'action',
       agentId,
-      message: `${AI_AGENTS[agentId].name} ${actionName}s ${actualBet} chips`,
+      agentName: agentInfo?.name || agentId,
+      message: `${agentInfo?.name || agentId} ${actionName}s ${actualBet} chips`,
     });
   },
 
   fold: (agentId) => {
     get().updateAgent(agentId, { folded: true, lastAction: 'fold' });
+    const agentInfo = AI_AGENTS[agentId];
     get().addEvent({
       type: 'action',
       agentId,
-      message: `${AI_AGENTS[agentId].name} folds`,
+      agentName: agentInfo?.name || agentId,
+      message: `${agentInfo?.name || agentId} folds`,
     });
   },
 
   collectPot: (winnerId) => {
     const { pot, agents } = get();
+    const winner = agents[winnerId];
+    if (!winner) return;
+
     set((state) => ({
       pot: 0,
       agents: {
         ...state.agents,
         [winnerId]: {
-          ...agents[winnerId],
-          chips: agents[winnerId].chips + pot,
+          ...winner,
+          chips: winner.chips + pot,
         },
       },
     }));
@@ -250,22 +324,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
   endHand: (winnerId, winningHand) => {
     get().collectPot(winnerId);
     set({ winnerId, winningHand, phase: 'showdown' });
+    const agentInfo = AI_AGENTS[winnerId];
     get().addEvent({
       type: 'winner',
       agentId: winnerId,
-      message: `${AI_AGENTS[winnerId].name} wins the pot!`,
+      agentName: agentInfo?.name || winnerId,
+      message: `${agentInfo?.name || winnerId} wins the pot!`,
       details: winningHand,
     });
   },
 
   startNewHand: () => {
-    const { agents, dealerIndex, handNumber } = get();
+    const { agents, dealerIndex, handNumber, activePlayers } = get();
 
     // Reset agent states for new hand
-    const resetAgents = Object.fromEntries(
-      Object.entries(agents).map(([id, agent]) => [
-        id,
-        {
+    const resetAgents: Partial<Record<AgentId, AgentState>> = {};
+    for (const [id, agent] of Object.entries(agents)) {
+      if (agent) {
+        resetAgents[id as AgentId] = {
           ...agent,
           holeCards: null,
           currentBet: 0,
@@ -276,10 +352,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
           winProbability: 25,
           lastAction: null,
           currentThought: null,
-        },
-      ])
-    ) as Record<AgentId, AgentState>;
+        };
+      }
+    }
 
+    const playerCount = activePlayers.length || 4;
     set({
       agents: resetAgents,
       phase: 'preflop',
@@ -289,9 +366,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
       winnerId: null,
       winningHand: null,
       handNumber: handNumber + 1,
-      dealerIndex: (dealerIndex + 1) % 4,
+      dealerIndex: (dealerIndex + 1) % playerCount,
     });
 
     get().addEvent({ type: 'system', message: `Hand #${handNumber + 1} starting...` });
+  },
+
+  initializeAgent: (agentId, chips = STARTING_CHIPS) => {
+    const state = get();
+    if (!state.agents[agentId]) {
+      set({
+        agents: {
+          ...state.agents,
+          [agentId]: createInitialAgentState(agentId, chips),
+        },
+      });
+    }
   },
 }));

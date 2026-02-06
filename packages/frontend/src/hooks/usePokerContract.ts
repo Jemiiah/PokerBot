@@ -1,6 +1,10 @@
 import { useReadContract, useWriteContract, useWatchContractEvent } from 'wagmi';
 import { parseEther, keccak256, encodePacked } from 'viem';
-import { POKER_GAME_ABI, POKER_GAME_ADDRESS, ACTION_TYPES } from '../config/contracts';
+import { POKER_GAME_4MAX_ABI, POKER_GAME_4MAX_ADDRESS, ACTION_TYPES } from '../config/contracts';
+
+// Use 4Max contract for all operations (2-4 players)
+const POKER_GAME_ABI = POKER_GAME_4MAX_ABI;
+const POKER_GAME_ADDRESS = POKER_GAME_4MAX_ADDRESS;
 
 // Types
 export interface Player {

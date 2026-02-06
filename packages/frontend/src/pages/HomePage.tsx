@@ -2,31 +2,29 @@ import { useState } from 'react';
 import { PokerTable } from '../components/PokerTable';
 import { Sidebar } from '../components/Sidebar';
 import { GameControls } from '../components/GameControls';
-import { GameSelector } from '../components/GameSelector';
-import { useRealGame } from '../hooks/useRealGame';
+import { useLiveGame } from '../hooks/useRealGame';
+import { stopGameLoop } from '../services/gameEngine';
+import { useGameStore } from '../stores/gameStore';
 
 export type GameMode = 'demo' | 'live';
 
 export function HomePage() {
-  const [mode, setMode] = useState<GameMode>('demo');
-  const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
+  const [mode, setMode] = useState<GameMode>('live');
 
-  // Connect to real game when in live mode with a selected game
-  const realGame = useRealGame(mode === 'live' ? selectedGameId : null);
+  // Connect to live game when in live mode (auto-discovers active game)
+  const liveGame = useLiveGame(mode === 'live');
 
   const handleModeChange = (newMode: GameMode) => {
-    setMode(newMode);
-    if (newMode === 'demo') {
-      setSelectedGameId(null);
+    // Stop demo game loop if switching away from demo
+    if (mode === 'demo' && newMode === 'live') {
+      stopGameLoop();
     }
-  };
 
-  const handleSelectGame = (gameId: string) => {
-    setSelectedGameId(gameId);
-  };
+    // Update the store mode first to ensure proper state separation
+    useGameStore.getState().setMode(newMode);
 
-  // Show game selector when in live mode with no game selected
-  const showGameSelector = mode === 'live' && !selectedGameId;
+    setMode(newMode);
+  };
 
   return (
     <div className="h-screen flex bg-[#0a0e13]">
@@ -36,31 +34,30 @@ export function HomePage() {
         <GameControls
           mode={mode}
           onModeChange={handleModeChange}
-          selectedGameId={selectedGameId}
-          onDeselectGame={() => setSelectedGameId(null)}
-          isConnected={realGame.isConnected}
-          isLoading={realGame.isLoading}
-          connectionError={realGame.error}
+          isConnected={liveGame.isConnected}
+          isLoading={liveGame.isLoading}
+          connectionError={liveGame.error}
+          currentGameId={liveGame.currentGameId}
         />
 
-        {/* Table Area or Game Selector */}
+        {/* Table Area */}
         <div className="flex-1 flex items-center justify-center p-8 overflow-hidden">
-          {showGameSelector ? (
-            <div className="w-full max-w-lg">
-              <GameSelector
-                onSelectGame={handleSelectGame}
-                selectedGameId={selectedGameId}
-              />
-            </div>
-          ) : (
-            <PokerTable />
-          )}
+          <PokerTable
+            mode={mode}
+            activePlayers={mode === 'live' ? liveGame.activePlayers : undefined}
+            currentGameId={mode === 'live' ? liveGame.currentGameId : null}
+          />
         </div>
       </div>
 
       {/* Sidebar */}
       <div className="w-80 flex-shrink-0">
-        <Sidebar />
+        <Sidebar
+          mode={mode}
+          gameId={liveGame.currentGameId}
+          gamePhase={liveGame.phase}
+          isConnected={liveGame.isConnected}
+        />
       </div>
     </div>
   );

@@ -1,10 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useGameStore, type GameEvent } from '../stores/gameStore';
 import { useBettingStore } from '../stores/bettingStore';
-import { AI_AGENTS, type AgentId } from '../lib/constants';
+import { AI_AGENTS, LIVE_AGENT_IDS, DEMO_AGENT_IDS, type AgentId } from '../lib/constants';
 import { AgentAvatar } from './AgentAvatar';
+import { LiveBettingPanel } from './LiveBettingPanel';
+import { MatchmakingQueue } from './MatchmakingQueue';
+import { realGameService, type AgentThoughtMessage } from '../services/realGameService';
 
-export function Sidebar() {
+interface SidebarProps {
+  mode?: 'demo' | 'live';
+  gameId?: string | null;
+  gamePhase?: number;
+  isConnected?: boolean;
+}
+
+export function Sidebar({ mode = 'demo', gameId = null, gamePhase = 0, isConnected = false }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<'thoughts' | 'betting'>('thoughts');
 
   return (
@@ -29,40 +39,256 @@ export function Sidebar() {
               : 'text-gray-400 hover:text-white'
           }`}
         >
-          Bet
+          Bet {mode === 'live' && '(MON)'}
         </button>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-hidden">
-        {activeTab === 'thoughts' ? <ThoughtsPanel /> : <BettingPanel />}
+      <div className="flex-1 overflow-y-auto">
+        {activeTab === 'thoughts' ? (
+          <ThoughtsPanel mode={mode} gameId={gameId} isConnected={isConnected} />
+        ) : mode === 'live' ? (
+          <div className="p-3 overflow-y-auto h-full">
+            <LiveBettingPanel
+              gameId={gameId}
+              player0Name="Blaze"
+              player1Name="Frost"
+              gamePhase={gamePhase}
+            />
+          </div>
+        ) : (
+          <BettingPanel />
+        )}
       </div>
     </div>
   );
 }
 
-function ThoughtsPanel() {
-  const { events, pot } = useGameStore();
+interface ThoughtsPanelProps {
+  mode: 'demo' | 'live';
+  gameId: string | null;
+  isConnected: boolean;
+}
+
+function ThoughtsPanel({ mode, gameId, isConnected }: ThoughtsPanelProps) {
+  const { events, pot, agents, isRunning } = useGameStore();
+  const [liveThoughts, setLiveThoughts] = useState<AgentThoughtMessage[]>([]);
+
+  // Determine if there's an active game
+  const hasActiveGame = mode === 'demo' ? isRunning : (gameId !== null && gameId !== undefined);
+
+  // Clear live thoughts when switching away from live mode or when no active game
+  useEffect(() => {
+    if (mode !== 'live' || !hasActiveGame) {
+      setLiveThoughts([]);
+    }
+  }, [mode, hasActiveGame]);
+
+  // Subscribe to live thoughts from coordinator in live mode
+  useEffect(() => {
+    if (mode !== 'live') return;
+
+    const unsubscribe = realGameService.onMessage((message) => {
+      if (message.type === 'agent_thought') {
+        setLiveThoughts((prev) => [message, ...prev].slice(0, 20));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [mode]);
+
+  // Filter events to only show events relevant to current mode AND active game
+  const filteredEvents = hasActiveGame ? events.filter((event) => {
+    // If event has no agentId, it's a system event - show it
+    if (!event.agentId) return true;
+
+    // Check if the agent belongs to the current mode
+    // Cast to string array for comparison since agentId is broader type
+    const liveAgents = LIVE_AGENT_IDS as readonly string[];
+    const demoAgents = DEMO_AGENT_IDS as readonly string[];
+    const isLiveAgent = liveAgents.includes(event.agentId);
+    const isDemoAgent = demoAgents.includes(event.agentId);
+
+    if (mode === 'live') {
+      return isLiveAgent;
+    } else {
+      return isDemoAgent;
+    }
+  }) : []; // No events when no active game
+
+  // Get active agents' thoughts based on mode
+  const activeAgents = mode === 'live' ? LIVE_AGENT_IDS : DEMO_AGENT_IDS;
 
   return (
     <div className="h-full flex flex-col">
-      {/* Pot Display */}
+      {/* Matchmaking Queue (Live mode only) */}
+      {mode === 'live' && (
+        <MatchmakingQueue isConnected={isConnected} />
+      )}
+
+      {/* Pot Display - only show actual pot when there's an active game */}
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between">
           <span className="text-gray-400 text-sm">Total Pot</span>
-          <span className="text-xl font-bold text-green-400">{pot}</span>
+          <span className="text-xl font-bold text-green-400">{hasActiveGame ? pot : 0}</span>
         </div>
       </div>
 
+      {/* Agent Thoughts Summary (Live Mode with active game) */}
+      {mode === 'live' && hasActiveGame && liveThoughts.length > 0 && (
+        <div className="p-3 border-b border-gray-800 bg-gray-900/50">
+          <p className="text-xs text-gray-500 mb-2">Latest Agent Thoughts</p>
+          <div className="space-y-2">
+            {liveThoughts.slice(0, 3).map((thought, idx) => (
+              <LiveThoughtItem key={`${thought.gameId}-${thought.timestamp}-${idx}`} thought={thought} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Current Agent Thoughts from Store - only when active game */}
+      {hasActiveGame && Object.values(agents).some(a => a?.currentThought) && (
+        <div className="p-3 border-b border-gray-800">
+          <p className="text-xs text-gray-500 mb-2">Active Thoughts</p>
+          <div className="space-y-2">
+            {activeAgents.map((agentId) => {
+              const agent = agents[agentId];
+              if (!agent?.currentThought) return null;
+              return (
+                <CurrentThoughtItem
+                  key={agentId}
+                  agentId={agentId}
+                  thought={agent.currentThought}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Events */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {events.length === 0 ? (
+        {filteredEvents.length === 0 ? (
           <p className="text-gray-500 text-sm text-center py-8">
-            Start the game to see AI thoughts...
+            {mode === 'live'
+              ? 'Select a game to see AI thoughts...'
+              : 'Start the game to see AI thoughts...'}
           </p>
         ) : (
-          events.map((event) => <EventItem key={event.id} event={event} />)
+          filteredEvents.map((event) => <EventItem key={event.id} event={event} />)
         )}
+      </div>
+    </div>
+  );
+}
+
+interface LiveThoughtItemProps {
+  thought: AgentThoughtMessage;
+}
+
+function LiveThoughtItem({ thought }: LiveThoughtItemProps) {
+  // Try to find matching agent by name or address
+  let agentId: AgentId | undefined;
+  const agentName = thought.agentAddress?.slice(0, 8) || 'Agent';
+
+  // Match by agent name if provided
+  for (const [id, info] of Object.entries(AI_AGENTS)) {
+    if (info.name.toLowerCase() === agentName.toLowerCase()) {
+      agentId = id as AgentId;
+      break;
+    }
+  }
+
+  const displayName = agentId ? AI_AGENTS[agentId].name : agentName;
+  const color = agentId ? AI_AGENTS[agentId].color : '#6B7280';
+
+  return (
+    <div className="p-2 rounded bg-purple-500/10 border border-purple-500/30">
+      <div className="flex items-start gap-2">
+        {agentId ? (
+          <AgentAvatar agentId={agentId} size="sm" />
+        ) : (
+          <div
+            className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold"
+            style={{ backgroundColor: color }}
+          >
+            {displayName[0]}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-bold" style={{ color }}>
+              {displayName}
+            </span>
+            <span className="text-xs px-1.5 py-0.5 bg-gray-700 rounded text-gray-300">
+              {thought.action}
+            </span>
+          </div>
+          <p className="text-xs text-gray-300 line-clamp-2">{thought.reasoning}</p>
+          {(thought.equity !== undefined || thought.potOdds !== undefined) && (
+            <div className="flex gap-2 mt-1 text-[10px] text-gray-500">
+              {thought.equity !== undefined && (
+                <span>Equity: {(thought.equity * 100).toFixed(0)}%</span>
+              )}
+              {thought.potOdds !== undefined && (
+                <span>Pot Odds: {(thought.potOdds * 100).toFixed(0)}%</span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface CurrentThoughtItemProps {
+  agentId: AgentId;
+  thought: {
+    text: string;
+    analysis?: string;
+    confidence?: 'low' | 'medium' | 'high';
+    emoji?: string;
+  };
+}
+
+function CurrentThoughtItem({ agentId, thought }: CurrentThoughtItemProps) {
+  const agentInfo = AI_AGENTS[agentId];
+
+  const confidenceColors = {
+    low: 'text-red-400',
+    medium: 'text-yellow-400',
+    high: 'text-green-400',
+  };
+
+  return (
+    <div
+      className="p-2 rounded border"
+      style={{
+        backgroundColor: `${agentInfo.color}10`,
+        borderColor: `${agentInfo.color}30`,
+      }}
+    >
+      <div className="flex items-start gap-2">
+        <AgentAvatar agentId={agentId} size="sm" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold" style={{ color: agentInfo.color }}>
+              {agentInfo.name}
+            </span>
+            {thought.confidence && (
+              <span className={`text-[10px] ${confidenceColors[thought.confidence]}`}>
+                {thought.confidence.toUpperCase()}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-gray-300 mt-0.5">
+            {thought.emoji && <span className="mr-1">{thought.emoji}</span>}
+            {thought.text}
+          </p>
+          {thought.analysis && (
+            <p className="text-[10px] text-gray-500 mt-1 line-clamp-2">{thought.analysis}</p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -101,6 +327,9 @@ function EventItem({ event }: { event: GameEvent }) {
         )}
         <div className="flex-1 min-w-0">
           <p className="text-xs text-gray-300">{event.message}</p>
+          {event.details && (
+            <p className="text-[10px] text-gray-500 mt-0.5">{event.details}</p>
+          )}
         </div>
         <span className="text-[10px] text-gray-500">{time}</span>
       </div>
@@ -115,7 +344,7 @@ function BettingPanel() {
   const [betAmount, setBetAmount] = useState(50);
 
   const canBet = isRunning && phase !== 'showdown' && phase !== 'waiting';
-  const agentIds: AgentId[] = ['claude', 'chatgpt', 'grok', 'deepseek'];
+  const agentIds = DEMO_AGENT_IDS;
 
   const handlePlaceBet = () => {
     if (!selectedAgent || !canBet) return;
@@ -153,7 +382,7 @@ function BettingPanel() {
           const agent = agents[agentId];
           const isSelected = selectedAgent === agentId;
           const hasBet = currentBets.some((b) => b.agentId === agentId);
-          const isOut = agent.chips <= 0 || agent.folded;
+          const isOut = agent && (agent.chips <= 0 || agent.folded);
 
           return (
             <button
@@ -201,7 +430,7 @@ function BettingPanel() {
             Bet {betAmount} on {AI_AGENTS[selectedAgent].name}
           </button>
           <p className="text-center text-xs text-gray-400">
-            Win: <span className="text-green-400">{Math.floor(betAmount * odds[selectedAgent])}</span>
+            Win: <span className="text-green-400">{Math.floor(betAmount * (odds[selectedAgent] ?? 2.5))}</span>
           </p>
         </div>
       )}

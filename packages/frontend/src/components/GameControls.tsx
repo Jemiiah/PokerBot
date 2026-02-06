@@ -6,21 +6,19 @@ import type { GameMode } from '../pages/HomePage';
 interface GameControlsProps {
   mode?: GameMode;
   onModeChange?: (mode: GameMode) => void;
-  selectedGameId?: string | null;
-  onDeselectGame?: () => void;
   isConnected?: boolean;
   isLoading?: boolean;
   connectionError?: string | null;
+  currentGameId?: string | null;
 }
 
 export function GameControls({
   mode = 'demo',
   onModeChange,
-  selectedGameId,
-  onDeselectGame,
   isConnected: coordinatorConnected,
   isLoading: coordinatorLoading,
   connectionError,
+  currentGameId,
 }: GameControlsProps) {
   const { isRunning, isPaused, handNumber } = useGameStore();
   const { address, isConnected: walletConnected } = useAccount();
@@ -41,8 +39,8 @@ export function GameControls({
     }
   };
 
-  const shortGameId = selectedGameId
-    ? `${selectedGameId.slice(0, 6)}...${selectedGameId.slice(-4)}`
+  const shortGameId = currentGameId
+    ? `${currentGameId.slice(0, 6)}...${currentGameId.slice(-4)}`
     : null;
 
   return (
@@ -97,19 +95,10 @@ export function GameControls({
             ) : null}
 
             {/* Game ID */}
-            {selectedGameId && (
+            {currentGameId && (
               <div className="flex items-center gap-2 text-gray-400 text-sm">
                 <span>Game:</span>
                 <span className="font-mono text-gray-300">{shortGameId}</span>
-                <button
-                  onClick={onDeselectGame}
-                  className="ml-1 text-gray-500 hover:text-gray-300 transition-colors"
-                  title="Stop watching"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
               </div>
             )}
           </div>
@@ -142,12 +131,14 @@ export function GameControls({
       {/* Center: Controls (Demo mode only) */}
       <div className="flex items-center gap-2">
         {isLiveMode ? (
-          // Live mode - just show watching indicator or prompt
-          !selectedGameId && (
-            <div className="text-gray-500 text-sm">
-              Select a game to watch
-            </div>
-          )
+          // Live mode - show waiting for agents or watching
+          <div className="text-gray-400 text-sm">
+            {coordinatorConnected
+              ? currentGameId
+                ? 'Watching live game...'
+                : 'Waiting for agents to start a game...'
+              : 'Connect to coordinator to watch live games'}
+          </div>
         ) : !walletConnected ? (
           <div className="text-gray-500 text-sm">
             Connect wallet to start demo

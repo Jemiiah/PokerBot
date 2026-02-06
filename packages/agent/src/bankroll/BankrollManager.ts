@@ -133,12 +133,14 @@ export class BankrollManager {
       return { shouldPlay: false, reason: 'Session stop-loss reached' };
     }
 
-    // Against unknown opponents, be more conservative - but much more lenient when joining for demo
-    const conservativeThreshold = isJoining ? 5n : 20n;  // Allow up to 20% when joining
-    if (opponentUnknown && wagerAmount > this.bankrollState.totalBalance / conservativeThreshold) {
+    // Against unknown opponents, use configured max risk percent
+    // When joining, be more lenient (allow up to 20%)
+    const maxRiskForUnknown = isJoining ? 0.20 : this.maxRiskPercent;
+    const wagerRatio = Number(wagerAmount) / Number(this.bankrollState.totalBalance);
+    if (opponentUnknown && wagerRatio > maxRiskForUnknown) {
       return {
         shouldPlay: false,
-        reason: 'High wager against unknown opponent',
+        reason: `High wager against unknown opponent (${(wagerRatio * 100).toFixed(1)}% > ${(maxRiskForUnknown * 100).toFixed(1)}%)`,
       };
     }
 
