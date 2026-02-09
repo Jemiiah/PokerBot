@@ -1,6 +1,9 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import { pino } from 'pino';
+import { registerApiRoutes, type RouteContext } from './api/routes.js';
+import { validateApiKey, updateAgentStats } from './api/auth.js';
+import type { ConnectedExternalAgent } from './api/types.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -53,6 +56,9 @@ const matches = new Map<string, Match>();
 const connectedAgents = new Map<string, ConnectedAgent>();
 const connectedFrontends = new Map<string, ConnectedFrontend>();
 const matchmakingQueue: QueuedAgent[] = [];
+
+// Phase 6: External agents connected via WebSocket API
+const connectedExternalAgents = new Map<string, ConnectedExternalAgent>();
 
 // Matchmaking configuration
 const MATCHMAKING_INTERVAL = 3000; // Check queue every 3 seconds
@@ -108,6 +114,23 @@ function broadcastToAllFrontends(data: any) {
       logger.error({ frontendId: id, error }, 'Failed to send to frontend');
     }
   }
+}
+
+// Phase 6: Send to specific external agent by wallet
+function sendToExternalAgent(walletAddress: string, data: any) {
+  const normalizedWallet = walletAddress.toLowerCase();
+  for (const [_apiKey, agent] of connectedExternalAgents) {
+    if (agent.walletAddress.toLowerCase() === normalizedWallet) {
+      try {
+        (agent.socket as any).send(JSON.stringify(data));
+        return true;
+      } catch (error) {
+        logger.error({ agentName: agent.agentName, error }, 'Failed to send to external agent');
+        return false;
+      }
+    }
+  }
+  return false;
 }
 
 // Matchmaking logic
@@ -364,6 +387,96 @@ function removeFromMatchmakingQueue(address: string) {
   }
 }
 
+// Phase 6: Add external agent to matchmaking queue (via API)
+function addExternalAgentToQueue(walletAddress: string, agentName: string, maxWager: bigint): boolean {
+  const normalizedWallet = walletAddress.toLowerCase();
+
+  // Check if already in queue
+  if (matchmakingQueue.find(a => a.address.toLowerCase() === normalizedWallet)) {
+    logger.warn({ walletAddress: normalizedWallet }, 'External agent already in queue');
+    return false;
+  }
+
+  // Check if in a game
+  for (const [gameId, match] of matches) {
+    if (match.status !== 'complete' && match.players.some(p => p.toLowerCase() === normalizedWallet)) {
+      logger.warn({ walletAddress: normalizedWallet, gameId }, 'External agent already in game');
+      return false;
+    }
+  }
+
+  // Get external agent's socket if connected
+  let socket: any = null;
+  for (const [_apiKey, externalAgent] of connectedExternalAgents) {
+    if (externalAgent.walletAddress.toLowerCase() === normalizedWallet) {
+      socket = externalAgent.socket;
+      externalAgent.inQueue = true;
+      break;
+    }
+  }
+
+  // Add to queue (socket may be null if API-only, not WebSocket connected)
+  matchmakingQueue.push({
+    address: walletAddress,
+    name: agentName,
+    socket: socket,
+    balance: maxWager, // Use maxWager as balance for external agents
+    maxWager,
+    queuedAt: Date.now(),
+  });
+
+  logger.info({
+    agent: agentName,
+    walletAddress: normalizedWallet,
+    maxWager: maxWager.toString(),
+    queueSize: matchmakingQueue.length,
+    isExternalAgent: true,
+  }, 'External agent added to matchmaking queue');
+
+  // Notify frontends
+  broadcastToAllFrontends({
+    type: 'agent_queued',
+    address: walletAddress,
+    name: agentName,
+    queueSize: matchmakingQueue.length,
+    queuedAgents: matchmakingQueue.map(a => ({ address: a.address, name: a.name })),
+    isExternalAgent: true,
+  });
+
+  // Try to create match immediately
+  tryCreateMatch();
+
+  return true;
+}
+
+// Phase 6: Get queue position for an address
+function getQueuePosition(walletAddress: string): number {
+  const normalizedWallet = walletAddress.toLowerCase();
+  const idx = matchmakingQueue.findIndex(a => a.address.toLowerCase() === normalizedWallet);
+  return idx === -1 ? -1 : idx + 1; // 1-indexed position
+}
+
+// Phase 6: Remove from queue and return success status
+function removeFromQueueByWallet(walletAddress: string): boolean {
+  const normalizedWallet = walletAddress.toLowerCase();
+  const idx = matchmakingQueue.findIndex(a => a.address.toLowerCase() === normalizedWallet);
+
+  if (idx === -1) {
+    return false;
+  }
+
+  // Update external agent state if connected
+  for (const [_apiKey, externalAgent] of connectedExternalAgents) {
+    if (externalAgent.walletAddress.toLowerCase() === normalizedWallet) {
+      externalAgent.inQueue = false;
+      break;
+    }
+  }
+
+  removeFromMatchmakingQueue(matchmakingQueue[idx].address);
+  return true;
+}
+
 // Cleanup stale games and fix inconsistent agent states
 function cleanupStaleGames() {
   const now = Date.now();
@@ -434,7 +547,8 @@ async function start() {
   fastify.addHook('onRequest', async (request, reply) => {
     reply.header('Access-Control-Allow-Origin', '*');
     reply.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    reply.header('Access-Control-Allow-Headers', 'Content-Type');
+    reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    reply.header('Access-Control-Expose-Headers', 'X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
     if (request.method === 'OPTIONS') {
       reply.send();
     }
@@ -448,12 +562,33 @@ async function start() {
   // Start cleanup system for stale games
   startCleanup();
 
+  // Phase 6: Register Public Agent API routes
+  const apiContext: RouteContext = {
+    getMatch: (gameId: string) => matches.get(gameId),
+    getAllMatches: () => Array.from(matches.values()),
+    getQueueSize: () => matchmakingQueue.length,
+    getQueuePosition,
+    addExternalToQueue: addExternalAgentToQueue,
+    removeFromQueue: removeFromQueueByWallet,
+    verifyTransaction: async (_txHash, _expectedAction, _walletAddress) => {
+      // TODO: Implement actual on-chain verification via viem
+      // For now, return true (trust agent's tx submission)
+      logger.debug({ txHash: _txHash, action: _expectedAction }, 'Transaction verification (placeholder)');
+      return true;
+    },
+    broadcastToFrontends,
+    broadcastToAllFrontends,
+  };
+
+  registerApiRoutes(fastify, apiContext);
+
   // REST endpoints
   fastify.get('/health', async () => {
     return {
       status: 'ok',
       matches: matches.size,
       agents: connectedAgents.size,
+      externalAgents: connectedExternalAgents.size,
       frontends: connectedFrontends.size,
       queueSize: matchmakingQueue.length,
     };
@@ -535,7 +670,7 @@ async function start() {
     fastify.get('/ws', { websocket: true }, (connection, _req) => {
       const socket = connection.socket;
       let clientId: string | null = null;
-      let clientType: 'agent' | 'frontend' | null = null;
+      let clientType: 'agent' | 'frontend' | 'external_agent' | null = null;
 
       logger.info('New WebSocket connection');
 
@@ -545,6 +680,60 @@ async function start() {
 
           // Track client type based on first message
           if (!clientType) {
+            // Phase 6: Handle external agent API authentication via WebSocket
+            if (data.type === 'api_auth') {
+              const apiKey = data.apiKey;
+              const agent = validateApiKey(apiKey);
+
+              if (!agent) {
+                socket.send(JSON.stringify({
+                  type: 'error',
+                  code: 'INVALID_API_KEY',
+                  message: 'Invalid or expired API key',
+                }));
+                socket.close();
+                return;
+              }
+
+              clientType = 'external_agent';
+              clientId = apiKey;
+
+              // Store connected external agent
+              connectedExternalAgents.set(apiKey, {
+                apiKey,
+                walletAddress: agent.walletAddress,
+                agentName: agent.agentName,
+                socket,
+                connectedAt: Date.now(),
+                lastActivity: Date.now(),
+                inQueue: false,
+                inGame: false,
+                currentGameId: null,
+              });
+
+              logger.info({
+                agentName: agent.agentName,
+                walletAddress: agent.walletAddress,
+              }, 'External agent authenticated via WebSocket');
+
+              socket.send(JSON.stringify({
+                type: 'api_authenticated',
+                agentName: agent.agentName,
+                walletAddress: agent.walletAddress,
+              }));
+
+              // Send current queue state
+              socket.send(JSON.stringify({
+                type: 'queue_update',
+                position: getQueuePosition(agent.walletAddress),
+                queueSize: matchmakingQueue.length,
+                estimatedWait: getQueuePosition(agent.walletAddress) > 0 ? '~30 seconds' : 'Not in queue',
+                timestamp: Date.now(),
+              }));
+
+              return;
+            }
+
             if (data.type === 'register') {
               clientType = 'agent';
               clientId = data.address;
@@ -645,6 +834,26 @@ async function start() {
             break;
           }
         }
+        // Phase 6: Remove from connected external agents
+        for (const [apiKey, externalAgent] of connectedExternalAgents) {
+          if (externalAgent.socket === socket) {
+            // Remove from matchmaking queue if in it
+            removeFromQueueByWallet(externalAgent.walletAddress);
+            connectedExternalAgents.delete(apiKey);
+            logger.info({
+              agentName: externalAgent.agentName,
+              walletAddress: externalAgent.walletAddress,
+            }, 'External agent disconnected');
+
+            // Notify frontends
+            broadcastToAllFrontends({
+              type: 'external_agent_disconnected',
+              walletAddress: externalAgent.walletAddress,
+              agentName: externalAgent.agentName,
+            });
+            break;
+          }
+        }
       });
     });
   });
@@ -653,7 +862,7 @@ async function start() {
     socket: any,
     data: any,
     clientId: string | null,
-    clientType: 'agent' | 'frontend' | null
+    clientType: 'agent' | 'frontend' | 'external_agent' | null
   ) {
     switch (data.type) {
       case 'register':
@@ -818,6 +1027,31 @@ async function start() {
                 if (playerAgent && playerAgent.currentGameId === data.gameId) {
                   playerAgent.inGame = false;
                   playerAgent.currentGameId = null;
+                }
+
+                // Phase 6: Also clean up external agents in this game
+                for (const [apiKey, extAgent] of connectedExternalAgents) {
+                  if (extAgent.walletAddress.toLowerCase() === playerAddr.toLowerCase() && extAgent.currentGameId === data.gameId) {
+                    extAgent.inGame = false;
+                    extAgent.currentGameId = null;
+
+                    // Update external agent stats
+                    const extAgentWon = data.won && data.address.toLowerCase() === extAgent.walletAddress.toLowerCase();
+                    updateAgentStats(apiKey, extAgentWon);
+
+                    // Send game_result to external agent
+                    sendToExternalAgent(extAgent.walletAddress, {
+                      type: 'game_result',
+                      gameId: data.gameId,
+                      winner: data.won ? data.address : 'opponent',
+                      winnerName: data.won ? finishedAgent?.name : 'Opponent',
+                      pot: data.pot || '0',
+                      yourResult: extAgentWon ? 'won' : 'lost',
+                      amountWon: extAgentWon ? data.pot : undefined,
+                      amountLost: !extAgentWon ? match.wagerAmount.toString() : undefined,
+                      timestamp: Date.now(),
+                    });
+                  }
                 }
               }
             }
@@ -1087,6 +1321,38 @@ async function start() {
           turnDurationMs: data.turnDurationMs,
           timestamp: data.timestamp || Date.now(),
         });
+
+        // Phase 6: Send 'your_turn' to external agent if it's their turn
+        if (data.agentAddress) {
+          const turnAddress = data.agentAddress.toLowerCase();
+          for (const [_apiKey, extAgent] of connectedExternalAgents) {
+            if (extAgent.walletAddress.toLowerCase() === turnAddress) {
+              sendToExternalAgent(extAgent.walletAddress, {
+                type: 'your_turn',
+                gameId: data.gameId,
+                gameState: data.gameState || [],
+                pot: data.pot || '0',
+                phase: data.phase || 'preflop',
+                communityCards: data.communityCards || [],
+                holeCards: data.holeCards || [],
+                validActions: data.validActions || [
+                  { action: 'fold' },
+                  { action: 'check' },
+                  { action: 'call' },
+                  { action: 'raise' },
+                  { action: 'all_in' },
+                ],
+                timeoutMs: data.turnDurationMs || 30000,
+                timestamp: Date.now(),
+              });
+              logger.info({
+                gameId: data.gameId,
+                agent: extAgent.agentName,
+              }, 'Sent your_turn to external agent');
+              break;
+            }
+          }
+        }
         break;
 
       // Agent sends initial hole cards for spectator display
@@ -1124,6 +1390,28 @@ async function start() {
           pauseDurationMs: data.pauseDurationMs,
           timestamp: Date.now(),
         });
+
+        // Phase 6: Send game_state update to external agents in this game
+        const phaseMatch = matches.get(data.gameId);
+        if (phaseMatch) {
+          for (const playerAddr of phaseMatch.players) {
+            for (const [_apiKey, extAgent] of connectedExternalAgents) {
+              if (extAgent.walletAddress.toLowerCase() === playerAddr.toLowerCase()) {
+                sendToExternalAgent(extAgent.walletAddress, {
+                  type: 'game_state',
+                  gameId: data.gameId,
+                  players: data.players || [],
+                  pot: data.pot || '0',
+                  phase: data.phase,
+                  communityCards: data.communityCards || [],
+                  currentTurn: data.currentTurn || '',
+                  minBet: data.minBet || '0',
+                  timestamp: Date.now(),
+                });
+              }
+            }
+          }
+        }
 
         // Spectator notification: Showdown reached with multiple players
         if (data.phase === 'showdown' && data.activePlayers && data.activePlayers > 1) {
