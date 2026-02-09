@@ -1,4 +1,5 @@
 import { useGameStore } from '../stores/gameStore';
+import { useStatsStore } from '../stores/statsStore';
 import { AI_AGENTS, type AgentId, type GamePhase, type Card, type Rank } from '../lib/constants';
 
 // Flexible type to handle readonly contract state from wagmi
@@ -159,19 +160,40 @@ export interface GameInfo {
   winner?: { address: string; name: string };
 }
 
+// Spectator notification types
+export interface SpectatorNotification {
+  type: 'spectator_notification';
+  notificationType: 'big_pot' | 'all_in' | 'showdown';
+  gameId: string;
+  message: string;
+  agentName?: string;
+  amount?: string;
+  pot?: string;
+  activePlayers?: number;
+  timestamp: number;
+}
+
 export type CoordinatorMessage =
   | { type: 'frontend_connected'; clientId: string }
   | { type: 'subscribed'; gameId: string; match?: { players: string[]; playerNames: string[] } }
   | { type: 'game_created'; gameId: string; player: string; playerName?: string; wagerAmount: string }
-  | { type: 'game_started'; gameId: string; players: string[]; playerNames: string[] }
+  | { type: 'game_started'; gameId: string; players: string[]; playerNames: string[]; startedAt?: number }
   | { type: 'player_joined'; gameId: string; player: string; playerName: string; players: string[]; playerNames: string[] }
-  | { type: 'game_ended'; gameId: string; winner: string; winnerName?: string; reason?: string }
+  | { type: 'game_ended'; gameId: string; winner: string; winnerName?: string; reason?: string; startedAt?: number; completedAt?: number; duration?: number }
   | { type: 'agent_connected'; address: string; name: string }
   | { type: 'agent_disconnected'; address: string; name: string }
   | { type: 'agent_queued'; address: string; name: string; queueSize: number; queuedAgents: QueuedAgentInfo[] }
   | { type: 'agent_dequeued'; address: string; name: string; queueSize: number; queuedAgents: QueuedAgentInfo[] }
   | { type: 'matchmaking_started'; creator: string; creatorName: string; players: QueuedAgentInfo[]; wagerAmount: string }
   | { type: 'match_created'; gameId: string; creator: string; creatorName: string; wagerAmount: string }
+  | { type: 'turn_started'; gameId: string; agentAddress: string; agentName: string; turnDurationMs: number; timestamp: number }
+  | { type: 'phase_changed'; gameId: string; phase: string; pauseDurationMs: number; timestamp: number }
+  | { type: 'winner_celebration'; gameId: string; winnerAddress: string; winnerName: string; pot: string; celebrationDurationMs: number; timestamp: number }
+  | { type: 'queue_update'; agents: QueuedAgentInfo[]; queueSize: number }
+  | { type: 'matchmaking_status'; isMatchmaking: boolean; queuedAgents: QueuedAgentInfo[] }
+  | { type: 'agent_cards'; gameId: string; agentAddress: string; agentName: string; holeCards: string; timestamp: number }
+  | { type: 'queue_state'; queueSize: number; queuedAgents: QueuedAgentInfo[] }
+  | SpectatorNotification
   | AgentThoughtMessage;
 
 // Map agent addresses to store AgentIds
@@ -435,6 +457,14 @@ class RealGameService {
         });
         break;
 
+      case 'queue_state':
+        // Initial queue state when frontend connects
+        this.updateMatchmakingState({
+          queueSize: message.queueSize,
+          queuedAgents: message.queuedAgents,
+        });
+        break;
+
       case 'matchmaking_started':
         this.updateMatchmakingState({
           isMatchmaking: true,
@@ -490,6 +520,9 @@ class RealGameService {
         break;
 
       case 'player_joined':
+        // Register the joining player
+        registerAgentAddress(message.player, message.playerName);
+
         // Update game with new player
         const existingGame = this.activeGames.get(message.gameId);
         if (existingGame) {
@@ -501,6 +534,14 @@ class RealGameService {
             players: updatedPlayers,
           });
         }
+
+        // Only add events if we're in live mode
+        if (store.mode === 'live') {
+          store.addEvent({
+            type: 'system',
+            message: `${message.playerName} joined the game`,
+          });
+        }
         break;
 
       case 'game_started':
@@ -509,43 +550,195 @@ class RealGameService {
           for (let i = 0; i < message.players.length; i++) {
             registerAgentAddress(message.players[i], message.playerNames[i]);
           }
+          // Deduplicate players by address (case-insensitive)
+          const seenAddresses = new Set<string>();
+          const uniquePlayers = message.players
+            .map((addr: string, i: number) => ({
+              address: addr,
+              name: message.playerNames[i],
+            }))
+            .filter((player: { address: string; name: string }) => {
+              const normalizedAddr = player.address.toLowerCase();
+              if (seenAddresses.has(normalizedAddr)) {
+                return false;
+              }
+              seenAddresses.add(normalizedAddr);
+              return true;
+            });
+
+          const gameStartTime = message.startedAt || Date.now();
+
           // Update game status
           this.updateGame(message.gameId, {
             status: 'active',
-            players: message.players.map((addr: string, i: number) => ({
-              address: addr,
-              name: message.playerNames[i],
-            })),
-            startedAt: Date.now(),
+            players: uniquePlayers,
+            startedAt: gameStartTime,
           });
-        }
-        // Only add events if we're in live mode
-        if (store.mode === 'live') {
-          store.addEvent({
-            type: 'system',
-            message: 'Game started! Players connected.',
-          });
+
+          // Only add events if we're in live mode
+          if (store.mode === 'live') {
+            // IMPORTANT: Reset game state for new game
+            store.setPhase('preflop');
+            // Reset pot and community cards directly
+            useGameStore.setState({ pot: 0, communityCards: [] });
+
+            // Initialize players with starting chips
+            for (const player of uniquePlayers) {
+              const agentId = getOrCreateAgentId(player.address);
+              store.updateAgent(agentId, {
+                chips: 1000, // Reset to starting chips
+                currentBet: 0,
+                folded: false,
+                isActive: true,
+                holeCards: undefined,
+              });
+            }
+
+            // Set active players for this game
+            const activePlayerIds = uniquePlayers.map(p => getOrCreateAgentId(p.address));
+            useGameStore.setState({ activePlayers: activePlayerIds });
+
+            // Set game started timestamp
+            store.setGameTimestamps(gameStartTime, undefined);
+            const playerNamesList = uniquePlayers.map(p => p.name).join(' vs ');
+            store.addEvent({
+              type: 'phase',
+              message: `Game Started: ${playerNamesList}`,
+            });
+            // Reset matchmaking state
+            this.updateMatchmakingState({ isMatchmaking: false, matchPlayers: undefined });
+          }
         }
         break;
 
       case 'game_ended':
         const winnerNameStr = message.winnerName || message.winner.slice(0, 8) + '...';
+        const endedGame = this.activeGames.get(message.gameId);
+
         // Update game status
         this.updateGame(message.gameId, {
           status: 'complete',
           winner: { address: message.winner, name: winnerNameStr },
         });
-        // Only add events if we're in live mode
+
+        // Record game result to stats store
+        // Always try to record, even if we don't have full game info
+        try {
+          const winnerId = getOrCreateAgentId(message.winner);
+          const completedAt = message.completedAt || Date.now();
+
+          // Use tracked game info if available, otherwise use defaults
+          const playerIds = endedGame?.players?.length
+            ? endedGame.players.map(p => getOrCreateAgentId(p.address))
+            : [winnerId]; // At minimum, include the winner
+
+          // Ensure winner is in players list
+          if (!playerIds.includes(winnerId)) {
+            playerIds.push(winnerId);
+          }
+
+          const startedAt = message.startedAt || endedGame?.startedAt || endedGame?.createdAt || (completedAt - 60000);
+          const durationSeconds = Math.max(1, Math.floor((completedAt - startedAt) / 1000));
+
+          // Calculate pot - use 0.02 MON (2 players * 0.01 MON entry fee) as default
+          const defaultPot = '20000000000000000'; // 0.02 MON in wei
+          const potWei = endedGame?.wagerAmount
+            ? (BigInt(endedGame.wagerAmount) * BigInt(Math.max(2, playerIds.length))).toString()
+            : defaultPot;
+
+          useStatsStore.getState().recordGameResult({
+            gameId: message.gameId,
+            timestamp: completedAt,
+            players: playerIds,
+            winnerId,
+            pot: potWei,
+            duration: durationSeconds,
+            phases: ['preflop', 'flop', 'turn', 'river', 'showdown'],
+            finalPhase: store.phase || 'showdown',
+          });
+
+          console.log('[RealGameService] Recorded game result:', { gameId: message.gameId, winnerId, playerIds });
+        } catch (err) {
+          console.error('[RealGameService] Failed to record game result:', err);
+        }
+
+        // Set game completion timestamp
         if (store.mode === 'live') {
+          store.setGameTimestamps(message.startedAt, message.completedAt || Date.now());
+          const durationStr = message.duration
+            ? ` (${Math.floor(message.duration / 1000)}s)`
+            : '';
           store.addEvent({
             type: 'system',
-            message: `Game ended. Winner: ${winnerNameStr}`,
+            message: `Game ended. Winner: ${winnerNameStr}${durationStr}`,
           });
         }
         // Reset matchmaking state
         this.updateMatchmakingState({ isMatchmaking: false, matchPlayers: undefined });
+        // Clear turn timer
+        store.clearTurnTimer();
         // Remove completed game after a delay
         setTimeout(() => this.removeGame(message.gameId), 10000);
+        break;
+
+      case 'turn_started':
+        // Set turn timer for spectator display
+        if (store.mode === 'live' && message.agentAddress) {
+          const agentId = getOrCreateAgentId(message.agentAddress);
+          store.setTurnTimer(agentId, message.timestamp, message.turnDurationMs);
+          store.setActiveAgent(agentId);
+        }
+        break;
+
+      case 'phase_changed':
+        // Set phase pause for spectator display
+        if (store.mode === 'live') {
+          const pauseUntil = Date.now() + message.pauseDurationMs;
+          store.setPhasePause(pauseUntil);
+          // Auto-clear pause after duration
+          setTimeout(() => {
+            store.setPhasePause(null);
+          }, message.pauseDurationMs);
+        }
+        break;
+
+      case 'winner_celebration':
+        // Handle winner celebration
+        if (store.mode === 'live') {
+          const celebWinnerId = getOrCreateAgentId(message.winnerAddress);
+          store.addEvent({
+            type: 'winner',
+            agentId: celebWinnerId,
+            agentName: message.winnerName,
+            message: `${message.winnerName} wins the pot!`,
+            details: `Pot: ${message.pot}`,
+          });
+        }
+        break;
+
+      case 'agent_cards':
+        // Handle initial hole cards for spectator display
+        if (store.mode === 'live' && message.holeCards) {
+          const cardsAgentId = getOrCreateAgentId(message.agentAddress);
+          const cards = parseHoleCardsString(message.holeCards);
+          if (cards) {
+            store.dealHoleCards(cardsAgentId, cards);
+            console.log('[RealGameService] Set hole cards for', message.agentName, ':', message.holeCards);
+          }
+        }
+        break;
+
+      case 'spectator_notification':
+        // Handle spectator notifications (big_pot, all_in, showdown)
+        if (store.mode === 'live') {
+          store.addEvent({
+            type: message.notificationType,
+            message: message.message,
+            agentName: message.agentName,
+            details: message.pot ? `Pot: ${message.pot}` : undefined,
+          });
+          console.log('[RealGameService] Spectator notification:', message.notificationType, message.message);
+        }
         break;
     }
   }
@@ -643,15 +836,23 @@ class RealGameService {
       // Pot is updated through actions, but we can sync it
     }
 
-    // Update community cards
+    // Update community cards - sync directly from contract state
     if (contractState.communityCardCount > 0) {
-      const newCards = [];
-      for (let i = store.communityCards.length; i < contractState.communityCardCount; i++) {
-        newCards.push(indexToCard(contractState.communityCards[i]));
+      // Get all community cards from contract
+      const allCards = [];
+      for (let i = 0; i < contractState.communityCardCount; i++) {
+        const cardIndex = contractState.communityCards[i];
+        if (cardIndex > 0) { // Only add non-zero cards (0 might be uninitialized)
+          allCards.push(indexToCard(cardIndex));
+        }
       }
-      if (newCards.length > 0) {
-        store.addCommunityCards(newCards);
+      // Only update if different from current state
+      if (allCards.length !== store.communityCards.length) {
+        useGameStore.setState({ communityCards: allCards });
       }
+    } else if (store.communityCards.length > 0) {
+      // Reset community cards if contract shows 0
+      useGameStore.setState({ communityCards: [] });
     }
 
     // Update active player

@@ -26,7 +26,7 @@ export interface AgentState {
 export interface GameEvent {
   id: string;
   timestamp: Date;
-  type: 'action' | 'phase' | 'winner' | 'system' | 'thought';
+  type: 'action' | 'phase' | 'winner' | 'system' | 'thought' | 'big_pot' | 'all_in' | 'showdown';
   agentId?: AgentId;
   agentName?: string;
   message: string;
@@ -60,6 +60,18 @@ export interface GameState {
   // Winner
   winnerId: AgentId | null;
   winningHand: string | null;
+
+  // Turn timer state (for spectator experience)
+  turnStartTime: number | null;
+  turnDuration: number | null;
+  turnAgentId: AgentId | null;
+
+  // Game lifecycle timestamps
+  gameStartedAt: number | null;
+  gameCompletedAt: number | null;
+
+  // Phase pause state
+  phasePauseUntil: number | null;
 }
 
 interface GameStore extends GameState {
@@ -93,6 +105,16 @@ interface GameStore extends GameState {
 
   // Initialize agent (for live mode dynamic agents)
   initializeAgent: (agentId: AgentId, chips?: number) => void;
+
+  // Turn timer actions
+  setTurnTimer: (agentId: AgentId, startTime: number, duration: number) => void;
+  clearTurnTimer: () => void;
+
+  // Game lifecycle timestamps
+  setGameTimestamps: (started?: number, completed?: number) => void;
+
+  // Phase pause
+  setPhasePause: (pauseUntil: number | null) => void;
 }
 
 const createInitialAgentState = (id: AgentId, chips = STARTING_CHIPS): AgentState => ({
@@ -143,6 +165,15 @@ const initialState: GameState = {
   events: [],
   winnerId: null,
   winningHand: null,
+  // Turn timer
+  turnStartTime: null,
+  turnDuration: null,
+  turnAgentId: null,
+  // Game lifecycle
+  gameStartedAt: null,
+  gameCompletedAt: null,
+  // Phase pause
+  phasePauseUntil: null,
 };
 
 let eventCounter = 0;
@@ -182,6 +213,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       isPaused: false,
       winnerId: null,
       winningHand: null,
+      // Reset timer state
+      turnStartTime: null,
+      turnDuration: null,
+      turnAgentId: null,
+      gameStartedAt: null,
+      gameCompletedAt: null,
+      phasePauseUntil: null,
     });
   },
 
@@ -382,5 +420,32 @@ export const useGameStore = create<GameStore>((set, get) => ({
         },
       });
     }
+  },
+
+  setTurnTimer: (agentId, startTime, duration) => {
+    set({
+      turnAgentId: agentId,
+      turnStartTime: startTime,
+      turnDuration: duration,
+    });
+  },
+
+  clearTurnTimer: () => {
+    set({
+      turnAgentId: null,
+      turnStartTime: null,
+      turnDuration: null,
+    });
+  },
+
+  setGameTimestamps: (started, completed) => {
+    set((state) => ({
+      gameStartedAt: started !== undefined ? started : state.gameStartedAt,
+      gameCompletedAt: completed !== undefined ? completed : state.gameCompletedAt,
+    }));
+  },
+
+  setPhasePause: (pauseUntil) => {
+    set({ phasePauseUntil: pauseUntil });
   },
 }));

@@ -220,8 +220,17 @@ export class ContractClient {
 
   /**
    * Create a new poker game
+   * @param wagerAmount - The wager amount in wei
+   * @param cards - The hole cards as indices [0-51]
+   * @param minPlayersParam - Minimum players (default 2)
+   * @param maxPlayersParam - Maximum players (default 4)
    */
-  async createGame(wagerAmount: bigint, cards: [number, number]): Promise<{
+  async createGame(
+    wagerAmount: bigint,
+    cards: [number, number],
+    minPlayersParam?: number,
+    maxPlayersParam?: number
+  ): Promise<{
     gameId: `0x${string}`;
     salt: `0x${string}`;
     txHash: `0x${string}`;
@@ -229,14 +238,14 @@ export class ContractClient {
     const salt = this.generateSalt();
     const commitment = this.createCommitment(cards[0], cards[1], salt);
 
+    // Use provided values or defaults
+    const minPlayers = minPlayersParam ?? 2;
+    const maxPlayers = maxPlayersParam ?? 4;
+
     logger.info(
-      { wager: formatEther(wagerAmount), commitment },
+      { wager: formatEther(wagerAmount), commitment, minPlayers, maxPlayers },
       'Creating game'
     );
-
-    // Create game with 2-4 players (default: min 2, max 4)
-    const minPlayers = 2;
-    const maxPlayers = 4;
 
     const hash = await this.wallet.wallet.writeContract({
       address: this.contractAddress,
@@ -246,7 +255,7 @@ export class ContractClient {
       value: wagerAmount,
       chain: this.wallet.chain,
       account: this.wallet.walletAccount,
-      gas: 500000n, // Gas limit for Monad testnet - increased for createGame complexity
+      gas: 500000n, // Gas limit for game operations
     });
 
     const receipt = await this.wallet.waitForTransaction(hash);
@@ -298,7 +307,7 @@ export class ContractClient {
       value: wagerAmount,
       chain: this.wallet.chain,
       account: this.wallet.walletAccount,
-      gas: 500000n, // Gas limit for Monad testnet - increased for joinGame complexity
+      gas: 500000n, // Gas limit for game operations
     });
 
     await this.wallet.waitForTransaction(hash);
@@ -327,7 +336,7 @@ export class ContractClient {
       args: [gameId, actionEnum, raiseAmount],
       chain: this.wallet.chain,
       account: this.wallet.walletAccount,
-      gas: 500000n, // Required gas limit for Monad testnet
+      gas: 300000n, // Gas limit for actions
     });
 
     await this.wallet.waitForTransaction(hash);
@@ -399,7 +408,7 @@ export class ContractClient {
       args: [gameId],
       chain: this.wallet.chain,
       account: this.wallet.walletAccount,
-      gas: 500000n, // Required gas limit for Monad testnet
+      gas: 300000n, // Gas limit for actions
     });
 
     await this.wallet.waitForTransaction(hash);

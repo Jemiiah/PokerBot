@@ -3,10 +3,11 @@ import { AI_AGENTS, type AgentId } from '../lib/constants';
 interface AgentAvatarProps {
   agentId: AgentId;
   isActive?: boolean;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
 }
 
 const sizes = {
+  xs: 'w-6 h-6',
   sm: 'w-10 h-10',
   md: 'w-14 h-14',
   lg: 'w-20 h-20',

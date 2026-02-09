@@ -91,6 +91,17 @@ export function MatchmakingQueue({ isConnected }: MatchmakingQueueProps) {
 
   return (
     <div className="p-3 bg-gray-900/50 border-b border-gray-800">
+      {/* Entry Fee Banner */}
+      <div className="mb-3 p-2 rounded-lg bg-gradient-to-r from-purple-500/20 to-blue-500/20 border border-purple-500/30">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🎰</span>
+            <span className="text-xs text-gray-300">Entry Fee</span>
+          </div>
+          <span className="text-sm font-bold text-purple-400">0.01 MON</span>
+        </div>
+      </div>
+
       {/* Connection Status */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
@@ -212,6 +223,11 @@ function GameCard({ game, getAgentId, formatWager, getStatusColor, getStatusBg }
     complete: 'Complete',
   };
 
+  // Deduplicate players by address (safety measure)
+  const uniquePlayers = game.players.filter((player, index, self) =>
+    index === self.findIndex(p => p.address.toLowerCase() === player.address.toLowerCase())
+  );
+
   const timeSince = (timestamp: number): string => {
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
     if (seconds < 60) return `${seconds}s ago`;
@@ -244,7 +260,7 @@ function GameCard({ game, getAgentId, formatWager, getStatusColor, getStatusBg }
 
       {/* Players */}
       <div className="flex flex-wrap gap-1">
-        {game.players.map((player) => {
+        {uniquePlayers.map((player) => {
           const agentId = getAgentId(player.name);
           const isCreator = game.creator?.address.toLowerCase() === player.address.toLowerCase();
           const isWinner = game.winner?.address.toLowerCase() === player.address.toLowerCase();
@@ -277,7 +293,7 @@ function GameCard({ game, getAgentId, formatWager, getStatusColor, getStatusBg }
         })}
 
         {/* Waiting for more players indicator */}
-        {game.status === 'waiting' && game.players.length < 2 && (
+        {game.status === 'waiting' && uniquePlayers.length < 2 && (
           <div className="flex items-center gap-1 px-2 py-1 rounded bg-gray-800/30 border border-dashed border-gray-600">
             <span className="text-xs text-gray-500">Waiting...</span>
             <span className="w-1.5 h-1.5 rounded-full bg-gray-500 animate-pulse" />

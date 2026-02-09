@@ -3,6 +3,7 @@ import { AI_AGENTS, type AgentId } from '../lib/constants';
 import { PlayingCard } from './PlayingCard';
 import { AgentAvatar } from './AgentAvatar';
 import { ThoughtBubble } from './ThoughtBubble';
+import { TurnTimer } from './TurnTimer';
 
 interface AgentSeatProps {
   agentId: AgentId;
@@ -81,12 +82,10 @@ export function AgentSeat({
           }
         `}
       >
-        {/* Active Turn Indicator */}
+        {/* Active Turn Indicator with Timer */}
         {isActive && (
           <div className="absolute -top-1 left-1/2 -translate-x-1/2 -translate-y-full">
-            <div className="px-2 py-0.5 bg-yellow-400 text-black text-xs font-bold rounded animate-pulse">
-              THINKING...
-            </div>
+            <TurnTimer compact className="mb-1" />
           </div>
         )}
 

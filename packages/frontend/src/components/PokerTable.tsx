@@ -1,6 +1,7 @@
 import { useGameStore } from '../stores/gameStore';
 import { AgentSeat } from './AgentSeat';
 import { CommunityCards } from './CommunityCards';
+import { GameDuration } from './GameDuration';
 import { getSeatPositions, type AgentId, type SeatPosition } from '../lib/constants';
 
 interface PokerTableProps {
@@ -126,10 +127,15 @@ export function PokerTable({ mode = 'demo', activePlayers, currentGameId }: Poke
             </div>
           </div>
 
-          {/* Player Count Indicator (Live Mode) */}
-          {mode === 'live' && hasActiveGame && playersToShow.length > 0 && (
-            <div className="mt-2 px-3 py-1 bg-black/30 rounded-full text-white/50 text-xs">
-              {playersToShow.length} players
+          {/* Player Count and Game Duration (Live Mode) */}
+          {mode === 'live' && hasActiveGame && (
+            <div className="mt-2 flex items-center gap-3">
+              {playersToShow.length > 0 && (
+                <div className="px-3 py-1 bg-black/30 rounded-full text-white/50 text-xs">
+                  {playersToShow.length} players
+                </div>
+              )}
+              <GameDuration />
             </div>
           )}
         </div>

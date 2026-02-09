@@ -18,6 +18,8 @@ interface Match {
   minPlayers: number;
   maxPlayers: number;
   createdAt: number;
+  startedAt?: number; // When game became active
+  completedAt?: number; // When game ended
 }
 
 interface ConnectedAgent {
@@ -28,6 +30,7 @@ interface ConnectedAgent {
   balance: bigint; // Agent's wallet balance
   ready: boolean; // Ready to be matched
   inGame: boolean; // Currently in a game
+  currentGameId: string | null; // Track which game agent is in
 }
 
 interface ConnectedFrontend {
@@ -53,9 +56,17 @@ const matchmakingQueue: QueuedAgent[] = [];
 
 // Matchmaking configuration
 const MATCHMAKING_INTERVAL = 3000; // Check queue every 3 seconds
-const MIN_PLAYERS_FOR_MATCH = 3; // Start with 3 players if 4 not available
-const MAX_PLAYERS_FOR_MATCH = 4;
-const DEFAULT_WAGER = BigInt('1000000000000000'); // 0.001 ETH default (lowered for testing)
+const MIN_PLAYERS_FOR_MATCH = 2; // Minimum players to start a match
+const MAX_PLAYERS_FOR_MATCH = 4; // Support up to 4 players per game
+const OPTIMAL_BATCH_WAIT_MS = 10000; // Wait up to 10s for more players to join
+const FIXED_ENTRY_FEE = BigInt('10000000000000000'); // 0.01 MON - fixed entry fee for all games
+const STALE_GAME_TIMEOUT = 10 * 60 * 1000; // 10 minutes - games older than this are cleaned up
+const CLEANUP_INTERVAL = 60 * 1000; // Run cleanup every minute
+
+// STRICT: Only ONE game at a time
+let currentActiveGameId: string | null = null;
+let gameCreationPending = false; // Prevents multiple game creations during the creation window
+let matchmakingWaitStart: number | null = null; // Track when we started waiting for more players
 
 // Generate unique ID for frontends
 let frontendIdCounter = 0;
@@ -108,29 +119,93 @@ function startMatchmaking() {
 }
 
 function tryCreateMatch() {
+  // Require at least one frontend/spectator connected before creating matches
+  // This ensures spectators don't miss any game events
+  if (connectedFrontends.size === 0) {
+    if (matchmakingQueue.length >= MIN_PLAYERS_FOR_MATCH) {
+      logger.info({ queueSize: matchmakingQueue.length }, 'Waiting for frontend to connect before starting match');
+    }
+    return;
+  }
+
+  // STRICT: Only ONE game at a time - wait for current game to finish
+  // Also block if game creation is in progress (waiting for on-chain confirmation)
+  if (gameCreationPending) {
+    logger.debug('Game creation pending, waiting for confirmation');
+    return;
+  }
+
+  if (currentActiveGameId) {
+    const activeMatch = matches.get(currentActiveGameId);
+    if (activeMatch && activeMatch.status !== 'complete') {
+      logger.debug({ currentGame: currentActiveGameId, status: activeMatch?.status }, 'Game in progress, waiting for completion');
+      return;
+    }
+    // Clear the active game if it's complete
+    currentActiveGameId = null;
+  }
+
   // Need at least MIN_PLAYERS_FOR_MATCH agents in queue
   if (matchmakingQueue.length < MIN_PLAYERS_FOR_MATCH) {
+    matchmakingWaitStart = null; // Reset wait timer
     return;
   }
 
-  // Get agents that can afford to play (sorted by queue time)
-  const eligibleAgents = matchmakingQueue
-    .filter(a => a.balance >= DEFAULT_WAGER)
-    .slice(0, MAX_PLAYERS_FOR_MATCH);
+  // Get agents that can afford the fixed entry fee (sorted by queue time)
+  const allEligibleAgents = matchmakingQueue
+    .filter(a => a.balance >= FIXED_ENTRY_FEE);
 
-  if (eligibleAgents.length < MIN_PLAYERS_FOR_MATCH) {
+  if (allEligibleAgents.length < MIN_PLAYERS_FOR_MATCH) {
     logger.debug({
       queueSize: matchmakingQueue.length,
-      eligible: eligibleAgents.length
+      eligible: allEligibleAgents.length,
+      requiredFee: FIXED_ENTRY_FEE.toString(),
     }, 'Not enough eligible agents for match');
+    matchmakingWaitStart = null;
     return;
   }
 
-  // Calculate wager - use the minimum maxWager among all players
-  const wagerAmount = eligibleAgents.reduce(
-    (min, agent) => agent.maxWager < min ? agent.maxWager : min,
-    eligibleAgents[0].maxWager
-  );
+  // Smart batching: wait briefly for more players if we have 2-3
+  const now = Date.now();
+  if (allEligibleAgents.length < MAX_PLAYERS_FOR_MATCH) {
+    if (matchmakingWaitStart === null) {
+      matchmakingWaitStart = now;
+      logger.info({
+        eligible: allEligibleAgents.length,
+        maxPlayers: MAX_PLAYERS_FOR_MATCH,
+        waitMs: OPTIMAL_BATCH_WAIT_MS,
+      }, 'Waiting for more players to join');
+      return;
+    }
+
+    const waitedMs = now - matchmakingWaitStart;
+    if (waitedMs < OPTIMAL_BATCH_WAIT_MS) {
+      logger.debug({
+        eligible: allEligibleAgents.length,
+        waitedMs,
+        remainingMs: OPTIMAL_BATCH_WAIT_MS - waitedMs,
+      }, 'Still waiting for more players');
+      return;
+    }
+
+    // Waited long enough, proceed with current players
+    logger.info({
+      eligible: allEligibleAgents.length,
+      waitedMs,
+    }, 'Wait time exceeded, starting match with current players');
+  }
+
+  // Reset wait timer since we're starting a match
+  matchmakingWaitStart = null;
+
+  // Take up to MAX_PLAYERS_FOR_MATCH
+  const eligibleAgents = allEligibleAgents.slice(0, MAX_PLAYERS_FOR_MATCH);
+
+  // Use fixed entry fee for all games
+  const wagerAmount = FIXED_ENTRY_FEE;
+
+  // Generate a temporary match ID for tracking (will be replaced with actual gameId)
+  const tempMatchId = `pending-${Date.now()}`;
 
   // Remove matched agents from queue
   for (const agent of eligibleAgents) {
@@ -138,17 +213,21 @@ function tryCreateMatch() {
     if (idx !== -1) {
       matchmakingQueue.splice(idx, 1);
     }
-    // Mark agent as in game
+    // Mark agent as in game IMMEDIATELY
     const connectedAgent = connectedAgents.get(agent.address);
     if (connectedAgent) {
       connectedAgent.inGame = true;
       connectedAgent.ready = false;
+      connectedAgent.currentGameId = tempMatchId; // Temporary ID until real game created
     }
   }
 
-  // First agent creates the game
-  const creator = eligibleAgents[0];
-  const joiners = eligibleAgents.slice(1);
+  // Sort by balance descending - richest agent creates the game (pays gas)
+  const sortedAgents = [...eligibleAgents].sort((a, b) =>
+    a.balance > b.balance ? -1 : a.balance < b.balance ? 1 : 0
+  );
+  const creator = sortedAgents[0];
+  const joiners = sortedAgents.slice(1);
 
   logger.info({
     creator: creator.name,
@@ -168,6 +247,9 @@ function tryCreateMatch() {
 
   // Send create command to first agent
   try {
+    // Set pending flag BEFORE sending command to prevent race conditions
+    gameCreationPending = true;
+
     creator.socket.send(JSON.stringify({
       type: 'create_game_command',
       wagerAmount: wagerAmount.toString(),
@@ -176,8 +258,18 @@ function tryCreateMatch() {
       expectedPlayers: joiners.map(j => ({ address: j.address, name: j.name })),
     }));
     logger.info({ agent: creator.name, wager: wagerAmount.toString() }, 'Sent create_game_command');
+
+    // Set timeout to clear pending flag if creation takes too long (30 seconds)
+    setTimeout(() => {
+      if (gameCreationPending && !currentActiveGameId) {
+        logger.warn('Game creation timed out, clearing pending flag');
+        gameCreationPending = false;
+        readdAgentsToQueue(eligibleAgents);
+      }
+    }, 30000);
   } catch (error) {
     logger.error({ error, agent: creator.name }, 'Failed to send create command');
+    gameCreationPending = false;
     // Return agents to queue
     readdAgentsToQueue(eligibleAgents);
   }
@@ -189,6 +281,7 @@ function readdAgentsToQueue(agents: QueuedAgent[]) {
     if (connectedAgent) {
       connectedAgent.inGame = false;
       connectedAgent.ready = true;
+      connectedAgent.currentGameId = null;
     }
     // Re-add to queue if not already there
     if (!matchmakingQueue.find(a => a.address === agent.address)) {
@@ -204,10 +297,22 @@ function addToMatchmakingQueue(agent: ConnectedAgent, balance: bigint, maxWager:
     matchmakingQueue.splice(existingIdx, 1);
   }
 
-  // Don't add if already in a game
-  if (agent.inGame) {
-    logger.debug({ agent: agent.name }, 'Agent already in game, not adding to queue');
+  // STRICT: Don't add if already in a game
+  if (agent.inGame || agent.currentGameId) {
+    logger.warn({ agent: agent.name, inGame: agent.inGame, currentGameId: agent.currentGameId }, 'Agent already in game, rejecting queue request');
+    agent.socket.send(JSON.stringify({ type: 'queue_rejected', reason: 'already_in_game' }));
     return;
+  }
+
+  // Check if agent is in any active match (belt and suspenders)
+  for (const [gameId, match] of matches) {
+    if (match.status !== 'complete' && match.players.some(p => p.toLowerCase() === agent.address.toLowerCase())) {
+      logger.warn({ agent: agent.name, gameId }, 'Agent found in active match, rejecting queue request');
+      agent.inGame = true;
+      agent.currentGameId = gameId;
+      agent.socket.send(JSON.stringify({ type: 'queue_rejected', reason: 'already_in_game', gameId }));
+      return;
+    }
   }
 
   matchmakingQueue.push({
@@ -259,6 +364,69 @@ function removeFromMatchmakingQueue(address: string) {
   }
 }
 
+// Cleanup stale games and fix inconsistent agent states
+function cleanupStaleGames() {
+  const now = Date.now();
+  const staleGameIds: string[] = [];
+
+  // Find stale games
+  for (const [gameId, match] of matches) {
+    if (now - match.createdAt > STALE_GAME_TIMEOUT) {
+      staleGameIds.push(gameId);
+    }
+  }
+
+  // Remove stale games and free agents
+  for (const gameId of staleGameIds) {
+    const match = matches.get(gameId);
+    if (match) {
+      logger.warn({ gameId, age: now - match.createdAt }, 'Cleaning up stale game');
+
+      // Free all agents in this game
+      for (const playerAddr of match.players) {
+        const agent = connectedAgents.get(playerAddr);
+        if (agent && agent.currentGameId === gameId) {
+          agent.inGame = false;
+          agent.currentGameId = null;
+          agent.ready = false;
+          logger.info({ agent: agent.name, gameId }, 'Freed agent from stale game');
+        }
+      }
+
+      matches.delete(gameId);
+      broadcastToAllFrontends({ type: 'game_ended', gameId, reason: 'timeout' });
+    }
+  }
+
+  // Also check for agents stuck in "inGame" state with no valid game
+  for (const [_address, agent] of connectedAgents) {
+    if (agent.inGame && agent.currentGameId) {
+      if (!matches.has(agent.currentGameId)) {
+        logger.warn({ agent: agent.name, gameId: agent.currentGameId }, 'Agent references non-existent game, resetting');
+        agent.inGame = false;
+        agent.currentGameId = null;
+        agent.ready = false;
+      }
+    }
+  }
+
+  // Reset gameCreationPending if stuck (no active game and no pending matches)
+  if (gameCreationPending && !currentActiveGameId) {
+    const hasPendingMatch = Array.from(matches.values()).some(m => m.status === 'pending');
+    if (!hasPendingMatch) {
+      logger.warn('gameCreationPending stuck with no pending matches, resetting');
+      gameCreationPending = false;
+    }
+  }
+}
+
+function startCleanup() {
+  setInterval(() => {
+    cleanupStaleGames();
+  }, CLEANUP_INTERVAL);
+  logger.info({ interval: CLEANUP_INTERVAL }, 'Cleanup system started');
+}
+
 async function start() {
   const fastify = Fastify({ logger: true });
 
@@ -277,6 +445,9 @@ async function start() {
   // Start matchmaking system
   startMatchmaking();
 
+  // Start cleanup system for stale games
+  startCleanup();
+
   // REST endpoints
   fastify.get('/health', async () => {
     return {
@@ -285,6 +456,16 @@ async function start() {
       agents: connectedAgents.size,
       frontends: connectedFrontends.size,
       queueSize: matchmakingQueue.length,
+    };
+  });
+
+  // Get arena configuration (entry fee, etc.)
+  fastify.get('/config', async () => {
+    return {
+      entryFee: FIXED_ENTRY_FEE.toString(),
+      entryFeeFormatted: '0.01 MON',
+      minPlayers: MIN_PLAYERS_FOR_MATCH,
+      maxPlayers: MAX_PLAYERS_FOR_MATCH,
     };
   });
 
@@ -403,6 +584,20 @@ async function start() {
                   logger.info({ clientId, gameId }, 'Sent active game to new frontend');
                 }
               }
+
+              // Notify all agents that a spectator is now watching - games can start
+              broadcast({
+                type: 'spectator_ready',
+                frontendCount: connectedFrontends.size,
+                message: 'A spectator has connected. Matchmaking is now active.',
+              });
+
+              // Immediately try to create a match now that a frontend is connected
+              if (matchmakingQueue.length >= MIN_PLAYERS_FOR_MATCH) {
+                logger.info({ queueSize: matchmakingQueue.length }, 'Frontend connected - triggering matchmaking');
+                tryCreateMatch();
+              }
+
               return;
             }
           }
@@ -437,6 +632,16 @@ async function start() {
           if (frontend.socket === socket) {
             connectedFrontends.delete(id);
             logger.info({ id }, 'Frontend disconnected');
+
+            // Notify agents if no more frontends are connected
+            if (connectedFrontends.size === 0) {
+              broadcast({
+                type: 'spectator_disconnected',
+                frontendCount: 0,
+                message: 'No spectators connected. Matchmaking paused until a spectator joins.',
+              });
+              logger.warn('All frontends disconnected - matchmaking paused');
+            }
             break;
           }
         }
@@ -464,6 +669,7 @@ async function start() {
           balance: BigInt(data.balance || '0'),
           ready: false,
           inGame: false,
+          currentGameId: null,
         });
 
         // Store name in registry for lookups
@@ -514,6 +720,21 @@ async function start() {
           pendingJoiners: data.pendingJoiners?.length || 0,
         }, 'Game created by coordinator command');
 
+        // Update creator's currentGameId with real game ID
+        const creatorAgent = connectedAgents.get(data.creator);
+        if (creatorAgent) {
+          creatorAgent.currentGameId = gameId;
+        }
+
+        // Update joiners' currentGameId
+        for (const joinerInfo of (data.pendingJoiners || [])) {
+          const joinerAgent = connectedAgents.get(joinerInfo.address);
+          if (joinerAgent) {
+            joinerAgent.currentGameId = gameId;
+            joinerAgent.inGame = true;
+          }
+        }
+
         // Track this match
         const matchCreatorName = agentNameRegistry.get(creatorAddr) || 'Unknown';
         const matchJoinerNames = (data.pendingJoiners || []).map((j: { address: string }) =>
@@ -525,8 +746,8 @@ async function start() {
           playerNames: [matchCreatorName, ...matchJoinerNames],
           wagerAmount: wager,
           status: 'active',
-          minPlayers: 3,
-          maxPlayers: 4,
+          minPlayers: MIN_PLAYERS_FOR_MATCH,
+          maxPlayers: MAX_PLAYERS_FOR_MATCH,
           createdAt: Date.now(),
         });
 
@@ -554,13 +775,27 @@ async function start() {
           }
         }
 
-        // Notify frontends
+        // Notify frontends with full player list
+        const allPlayers = [data.creator, ...(data.pendingJoiners || []).map((j: { address: string }) => j.address)];
+        const allPlayerNames = [matchCreatorName, ...matchJoinerNames];
+
         broadcastToAllFrontends({
           type: 'match_created',
           gameId,
           creator: data.creator,
-          creatorName: agentNameRegistry.get(creatorAddr) || 'Unknown',
+          creatorName: matchCreatorName,
+          players: allPlayers,
+          playerNames: allPlayerNames,
           wagerAmount: wager.toString(),
+        });
+
+        // Also send game_started so frontends set up activePlayers properly
+        broadcastToAllFrontends({
+          type: 'game_started',
+          gameId,
+          players: allPlayers,
+          playerNames: allPlayerNames,
+          startedAt: Date.now(),
         });
         break;
 
@@ -569,12 +804,43 @@ async function start() {
         const finishedAgent = connectedAgents.get(data.address);
         if (finishedAgent) {
           finishedAgent.inGame = false;
-          logger.info({ agent: finishedAgent.name, won: data.won }, 'Agent finished game');
+          finishedAgent.currentGameId = null;
+          finishedAgent.ready = false;
+          logger.info({ agent: finishedAgent.name, won: data.won, gameId: data.gameId }, 'Agent finished game');
 
           // Clean up match if this game exists
           if (data.gameId && matches.has(data.gameId)) {
+            const match = matches.get(data.gameId);
+            // Mark all players in this match as no longer in game
+            if (match) {
+              for (const playerAddr of match.players) {
+                const playerAgent = connectedAgents.get(playerAddr);
+                if (playerAgent && playerAgent.currentGameId === data.gameId) {
+                  playerAgent.inGame = false;
+                  playerAgent.currentGameId = null;
+                }
+              }
+            }
             matches.delete(data.gameId);
-            broadcastToAllFrontends({ type: 'game_ended', gameId: data.gameId });
+            logger.info({ gameId: data.gameId }, 'Match cleaned up from tracked games');
+          }
+
+          // Always send game_ended to frontends (even if match wasn't tracked)
+          // This ensures UI cleanup for games created outside coordinator tracking
+          if (data.gameId) {
+            broadcastToAllFrontends({
+              type: 'game_ended',
+              gameId: data.gameId,
+              winner: data.won ? data.address : 'opponent',
+              winnerName: data.won ? finishedAgent?.name : 'Opponent',
+            });
+            logger.info({ gameId: data.gameId, agent: finishedAgent?.name }, 'Sent game_ended to frontends');
+          }
+
+          // STRICT: Clear active game
+          if (currentActiveGameId === data.gameId) {
+            currentActiveGameId = null;
+            logger.info({ gameId: data.gameId }, 'Active game finished and cleared');
           }
 
           // Auto-queue agent again if they want to continue playing
@@ -582,10 +848,10 @@ async function start() {
             setTimeout(() => {
               // Small delay before requeuing
               const agent = connectedAgents.get(data.address);
-              if (agent && !agent.inGame) {
+              if (agent && !agent.inGame && !agent.currentGameId) {
                 addToMatchmakingQueue(agent, BigInt(data.balance), BigInt(data.maxWager));
               }
-            }, 2000);
+            }, 3000); // Increased delay
           }
         }
         break;
@@ -602,6 +868,13 @@ async function start() {
         const creatorAddress = data.player.toLowerCase();
         const creatorName = agentNameRegistry.get(creatorAddress) || 'Unknown';
 
+        // Clear pending flag - game creation confirmed
+        gameCreationPending = false;
+
+        // STRICT: Set this as the active game
+        currentActiveGameId = data.gameId;
+        logger.info({ gameId: data.gameId, creator: creatorName }, 'New active game created');
+
         matches.set(data.gameId, {
           gameId: data.gameId,
           players: [data.player],
@@ -609,7 +882,7 @@ async function start() {
           wagerAmount: BigInt(data.wagerAmount),
           status: 'pending',
           minPlayers: data.minPlayers || 2,
-          maxPlayers: data.maxPlayers || 4,
+          maxPlayers: data.maxPlayers || 2, // STRICT: Always 2 players
           createdAt: Date.now(),
         });
 
@@ -622,8 +895,8 @@ async function start() {
           player: data.player,
           playerName: creatorName,
           wagerAmount: data.wagerAmount,
-          minPlayers: data.minPlayers || 2,
-          maxPlayers: data.maxPlayers || 4,
+          minPlayers: data.minPlayers || MIN_PLAYERS_FOR_MATCH,
+          maxPlayers: data.maxPlayers || MAX_PLAYERS_FOR_MATCH,
         });
         break;
 
@@ -633,12 +906,20 @@ async function start() {
           const joinerAddress = data.player.toLowerCase();
           const joinerName = agentNameRegistry.get(joinerAddress) || 'Unknown';
 
+          // IMPORTANT: Check if player is already in the match to prevent duplicates
+          const alreadyInMatch = match.players.some(p => p.toLowerCase() === joinerAddress);
+          if (alreadyInMatch) {
+            logger.debug({ agent: joinerName, gameId: data.gameId }, 'Player already in match, ignoring duplicate join');
+            break;
+          }
+
           match.players.push(data.player);
           match.playerNames.push(joinerName);
 
           // Check if game should start
           if (match.players.length >= match.maxPlayers) {
             match.status = 'active';
+            match.startedAt = Date.now();
           }
 
           broadcast({
@@ -665,6 +946,7 @@ async function start() {
               gameId: data.gameId,
               players: match.players,
               playerNames: match.playerNames,
+              startedAt: match.startedAt,
             });
           }
         }
@@ -674,6 +956,13 @@ async function start() {
         const completedMatch = matches.get(data.gameId);
         if (completedMatch) {
           completedMatch.status = 'complete';
+          completedMatch.completedAt = Date.now();
+
+          // STRICT: Clear active game so next match can start
+          if (currentActiveGameId === data.gameId) {
+            currentActiveGameId = null;
+            logger.info({ gameId: data.gameId }, 'Active game completed, ready for next match');
+          }
 
           const winnerAddress = data.winner?.toLowerCase();
           const winnerName = winnerAddress ? agentNameRegistry.get(winnerAddress) : undefined;
@@ -687,6 +976,11 @@ async function start() {
             winner: data.winner,
             winnerName: winnerName || 'Unknown',
             reason: data.reason,
+            startedAt: completedMatch.startedAt,
+            completedAt: completedMatch.completedAt,
+            duration: completedMatch.startedAt
+              ? completedMatch.completedAt - completedMatch.startedAt
+              : undefined,
           });
         }
         break;
@@ -731,9 +1025,9 @@ async function start() {
         const thoughtAgentAddress = data.agentAddress?.toLowerCase();
         const thoughtAgentName = data.agentName || agentNameRegistry.get(thoughtAgentAddress) || 'Agent';
 
-        logger.debug(
-          { gameId: data.gameId, agent: thoughtAgentName, action: data.action },
-          'Relaying agent thought'
+        logger.info(
+          { gameId: data.gameId, agent: thoughtAgentName, action: data.action, subscribedFrontends: connectedFrontends.size },
+          'Relaying agent thought to frontends'
         );
 
         broadcastToFrontends(data.gameId, {
@@ -758,6 +1052,130 @@ async function start() {
           gameId: data.gameId,
           agentName: thoughtAgentName,
           action: data.action,
+        });
+
+        // Spectator notification: All-in action
+        if (data.action === 'all_in' || data.action === 'allin') {
+          broadcastToFrontends(data.gameId, {
+            type: 'spectator_notification',
+            notificationType: 'all_in',
+            gameId: data.gameId,
+            message: `${thoughtAgentName} goes ALL IN!`,
+            agentName: thoughtAgentName,
+            amount: data.amount,
+            timestamp: Date.now(),
+          });
+          logger.info({ gameId: data.gameId, agent: thoughtAgentName }, 'Spectator notification: ALL IN');
+        }
+        break;
+
+      // Agent's turn has started - relay to frontends for timer display
+      case 'turn_started':
+        const turnAgentName = data.agentName || agentNameRegistry.get(data.agentAddress?.toLowerCase()) || 'Agent';
+
+        logger.info({
+          gameId: data.gameId,
+          agent: turnAgentName,
+          turnDurationMs: data.turnDurationMs,
+        }, 'Relaying turn_started to frontends');
+
+        broadcastToFrontends(data.gameId, {
+          type: 'turn_started',
+          gameId: data.gameId,
+          agentAddress: data.agentAddress,
+          agentName: turnAgentName,
+          turnDurationMs: data.turnDurationMs,
+          timestamp: data.timestamp || Date.now(),
+        });
+        break;
+
+      // Agent sends initial hole cards for spectator display
+      case 'agent_cards':
+        const cardsAgentName = data.agentName || agentNameRegistry.get(data.agentAddress?.toLowerCase()) || 'Agent';
+
+        logger.info({
+          gameId: data.gameId,
+          agent: cardsAgentName,
+          cards: data.holeCards,
+        }, 'Relaying agent_cards to frontends');
+
+        broadcastToFrontends(data.gameId, {
+          type: 'agent_cards',
+          gameId: data.gameId,
+          agentAddress: data.agentAddress,
+          agentName: cardsAgentName,
+          holeCards: data.holeCards,
+          timestamp: data.timestamp || Date.now(),
+        });
+        break;
+
+      // Phase changed - relay to frontends for pause display
+      case 'phase_changed':
+        logger.info({
+          gameId: data.gameId,
+          phase: data.phase,
+          pauseDurationMs: data.pauseDurationMs,
+        }, 'Relaying phase_changed to frontends');
+
+        broadcastToFrontends(data.gameId, {
+          type: 'phase_changed',
+          gameId: data.gameId,
+          phase: data.phase,
+          pauseDurationMs: data.pauseDurationMs,
+          timestamp: Date.now(),
+        });
+
+        // Spectator notification: Showdown reached with multiple players
+        if (data.phase === 'showdown' && data.activePlayers && data.activePlayers > 1) {
+          broadcastToFrontends(data.gameId, {
+            type: 'spectator_notification',
+            notificationType: 'showdown',
+            gameId: data.gameId,
+            message: `Showdown! ${data.activePlayers} players reveal their cards!`,
+            activePlayers: data.activePlayers,
+            timestamp: Date.now(),
+          });
+          logger.info({ gameId: data.gameId, activePlayers: data.activePlayers }, 'Spectator notification: SHOWDOWN');
+        }
+        break;
+
+      // Pot update - check for big pot notifications
+      case 'pot_update':
+        const BIG_POT_THRESHOLD = BigInt('50000000000000000'); // 0.05 MON
+        const potAmount = BigInt(data.pot || '0');
+
+        if (potAmount >= BIG_POT_THRESHOLD) {
+          const potMon = Number(potAmount) / 1e18;
+          broadcastToFrontends(data.gameId, {
+            type: 'spectator_notification',
+            notificationType: 'big_pot',
+            gameId: data.gameId,
+            message: `Big pot alert! ${potMon.toFixed(3)} MON at stake!`,
+            pot: data.pot,
+            timestamp: Date.now(),
+          });
+          logger.info({ gameId: data.gameId, pot: data.pot }, 'Spectator notification: BIG POT');
+        }
+        break;
+
+      // Winner celebration - relay to frontends
+      case 'winner_celebration':
+        const winnerCelebName = data.winnerName || agentNameRegistry.get(data.winnerAddress?.toLowerCase()) || 'Winner';
+
+        logger.info({
+          gameId: data.gameId,
+          winner: winnerCelebName,
+          pot: data.pot,
+        }, 'Relaying winner_celebration to frontends');
+
+        broadcastToFrontends(data.gameId, {
+          type: 'winner_celebration',
+          gameId: data.gameId,
+          winnerAddress: data.winnerAddress,
+          winnerName: winnerCelebName,
+          pot: data.pot,
+          celebrationDurationMs: data.celebrationDurationMs || 5000,
+          timestamp: Date.now(),
         });
         break;
 

@@ -38,7 +38,11 @@ interface ActiveGame {
   opponentAddress: string;
   wagerAmount: bigint;
   isCreator: boolean;
+  lastKnownPhase?: string; // Track phase for spectator pause notifications
 }
+
+// Lock to prevent concurrent game creation/joining
+let gameOperationLock = false;
 
 const PHASE_MAP: Record<number, string> = {
   0: 'waiting',
@@ -235,12 +239,18 @@ export class PokerAgent {
 
       case 'create_game_command':
         // Coordinator tells us to create a game
+        // Check if we're already in a game or processing another command
+        if (this.activeGames.size > 0 || gameOperationLock) {
+          logger.warn({ activeGames: this.activeGames.size, locked: gameOperationLock }, 'Ignoring create_game_command - already in game or locked');
+          return;
+        }
+
         logger.info({
           wager: message.wagerAmount,
           expectedPlayers: message.expectedPlayers?.length,
         }, 'Received create_game_command from coordinator');
 
-        this.isQueuedForMatch = false;
+        gameOperationLock = true;
         this.pendingJoiners = message.expectedPlayers || [];
 
         await this.createGameByCommand(
@@ -252,13 +262,19 @@ export class PokerAgent {
 
       case 'join_game_command':
         // Coordinator tells us to join a specific game
+        // Check if we're already in a game or processing another command
+        if (this.activeGames.size > 0 || gameOperationLock) {
+          logger.warn({ activeGames: this.activeGames.size, locked: gameOperationLock }, 'Ignoring join_game_command - already in game or locked');
+          return;
+        }
+
         logger.info({
           gameId: message.gameId,
           wager: message.wagerAmount,
           creator: message.creatorName,
         }, 'Received join_game_command from coordinator');
 
-        this.isQueuedForMatch = false;
+        gameOperationLock = true;
 
         await this.joinGameByCommand(
           message.gameId as `0x${string}`,
@@ -285,35 +301,42 @@ export class PokerAgent {
       return;
     }
 
+    // Don't signal if already queued or processing a game operation
+    if (this.isQueuedForMatch || gameOperationLock) {
+      logger.debug({ queued: this.isQueuedForMatch, locked: gameOperationLock }, 'Already queued or locked, not signaling ready');
+      return;
+    }
+
     // Get current balance
     const balance = await this.wallet.getBalance();
     this.bankroll.updateBalance(balance);
 
-    // Calculate max wager based on config
-    const wagerPercent = config.maxWagerPercent || 5;
-    const maxWager = balance * BigInt(Math.floor(wagerPercent * 10)) / 1000n;
-    const minWager = 1000000000000000n; // 0.001 ETH
+    // Fixed entry fee: 0.01 MON (must have enough for entry + gas)
+    const FIXED_ENTRY_FEE = 10000000000000000n; // 0.01 MON
+    const GAS_BUFFER = 4000000000000000n; // 0.004 MON for gas
+    const minRequired = FIXED_ENTRY_FEE + GAS_BUFFER;
 
-    // Only signal ready if we have enough balance
-    if (balance < minWager) {
-      logger.warn({ balance: balance.toString() }, 'Balance too low to play');
+    // Only signal ready if we have enough balance for entry + gas
+    if (balance < minRequired) {
+      logger.warn({
+        balance: balance.toString(),
+        required: minRequired.toString(),
+      }, 'Balance too low for fixed entry fee + gas');
       return;
     }
-
-    const effectiveMaxWager = maxWager < minWager ? minWager : maxWager;
 
     this.coordinatorWs.send(
       JSON.stringify({
         type: 'ready_to_play',
         address: this.wallet.address,
         balance: balance.toString(),
-        maxWager: effectiveMaxWager.toString(),
+        maxWager: FIXED_ENTRY_FEE.toString(), // Always use fixed entry fee
       })
     );
 
     logger.info({
       balance: await this.wallet.getFormattedBalance(),
-      maxWager: effectiveMaxWager.toString(),
+      entryFee: '0.01 MON',
     }, 'Signaled ready to play');
   }
 
@@ -338,7 +361,8 @@ export class PokerAgent {
 
       this.bankroll.reserveForMatch(wagerAmount);
 
-      const result = await this.contract.createGame(wagerAmount, holeCards);
+      // Pass minPlayers and maxPlayers to contract
+      const result = await this.contract.createGame(wagerAmount, holeCards, minPlayers, maxPlayers);
 
       this.activeGames.set(result.gameId, {
         gameId: result.gameId,
@@ -348,6 +372,9 @@ export class PokerAgent {
         wagerAmount,
         isCreator: true,
       });
+
+      // Mark as no longer queued AFTER game is successfully created
+      this.isQueuedForMatch = false;
 
       logger.info({ gameId: result.gameId }, 'Game created by command');
 
@@ -364,12 +391,19 @@ export class PokerAgent {
         );
       }
 
+      // Send hole cards for spectator display
+      this.sendHoleCardsToCoordinator(result.gameId, holeCards);
+
       // Clear pending joiners
       this.pendingJoiners = [];
     } catch (error) {
       logger.error({ error }, 'Failed to create game by command');
-      // Re-signal ready to play
-      setTimeout(() => this.signalReadyToPlay(), 3000);
+      this.isQueuedForMatch = false;
+      // Re-signal ready to play after delay
+      setTimeout(() => this.signalReadyToPlay(), 5000);
+    } finally {
+      // Always release the lock
+      gameOperationLock = false;
     }
   }
 
@@ -399,6 +433,9 @@ export class PokerAgent {
         isCreator: false,
       });
 
+      // Mark as no longer queued AFTER successfully joining
+      this.isQueuedForMatch = false;
+
       logger.info({ gameId }, 'Joined game by command');
 
       // Notify coordinator
@@ -411,10 +448,17 @@ export class PokerAgent {
           })
         );
       }
+
+      // Send hole cards for spectator display
+      this.sendHoleCardsToCoordinator(gameId, holeCards);
     } catch (error) {
       logger.error({ error, gameId }, 'Failed to join game by command');
-      // Re-signal ready to play
-      setTimeout(() => this.signalReadyToPlay(), 3000);
+      this.isQueuedForMatch = false;
+      // Re-signal ready to play after delay
+      setTimeout(() => this.signalReadyToPlay(), 5000);
+    } finally {
+      // Always release the lock
+      gameOperationLock = false;
     }
   }
 
@@ -426,8 +470,10 @@ export class PokerAgent {
     this.signalReadyToPlay();
 
     // Then periodically re-signal if not in a game
+    // Increased interval to reduce race conditions
     this.readySignalTimer = setInterval(() => {
-      if (this.activeGames.size === 0 && !this.isQueuedForMatch) {
+      // Only signal if: not in game, not queued, not processing a command
+      if (this.activeGames.size === 0 && !this.isQueuedForMatch && !gameOperationLock) {
         this.signalReadyToPlay();
       }
     }, READY_SIGNAL_INTERVAL);
@@ -463,8 +509,14 @@ export class PokerAgent {
     }
   ): Promise<void> {
     if (!this.coordinatorWs || this.coordinatorWs.readyState !== WebSocket.OPEN) {
+      logger.warn({
+        hasWs: !!this.coordinatorWs,
+        readyState: this.coordinatorWs?.readyState
+      }, 'Cannot send thought - coordinator WebSocket not connected');
       return;
     }
+
+    logger.debug({ gameId, action: decision.action }, 'Sending thought to coordinator');
 
     try {
       // Generate personality-flavored thought
@@ -495,9 +547,59 @@ export class PokerAgent {
           holeCards: extra?.holeCards, // Send hole cards for spectator display
         })
       );
+      logger.info({ gameId, action: decision.action, thought: personalityThought.slice(0, 50) }, 'Thought sent to coordinator');
     } catch (error) {
       logger.error({ error }, 'Failed to send thought to coordinator');
     }
+  }
+
+  /**
+   * Notify coordinator that this agent's turn has started
+   * Used for frontend turn timer display
+   */
+  private sendTurnStartToCoordinator(gameId: string, turnDurationMs: number): void {
+    if (!this.coordinatorWs || this.coordinatorWs.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.coordinatorWs.send(
+      JSON.stringify({
+        type: 'turn_started',
+        gameId,
+        agentAddress: this.wallet.address,
+        agentName: this.personality.getPersonality().name,
+        turnDurationMs,
+        timestamp: Date.now(),
+      })
+    );
+    logger.debug({ gameId, turnDurationMs }, 'Turn start notification sent');
+  }
+
+  /**
+   * Send hole cards to coordinator for spectator display
+   * Called immediately when joining/creating a game so spectators can see cards
+   */
+  private sendHoleCardsToCoordinator(gameId: string, holeCards: [number, number]): void {
+    if (!this.coordinatorWs || this.coordinatorWs.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    // Convert card indices to string format (e.g., "Ah Kd")
+    const card1 = indexToCard(holeCards[0]);
+    const card2 = indexToCard(holeCards[1]);
+    const holeCardsStr = `${cardToString(card1)} ${cardToString(card2)}`;
+
+    this.coordinatorWs.send(
+      JSON.stringify({
+        type: 'agent_cards',
+        gameId,
+        agentAddress: this.wallet.address,
+        agentName: this.personality.getPersonality().name,
+        holeCards: holeCardsStr,
+        timestamp: Date.now(),
+      })
+    );
+    logger.info({ gameId, cards: holeCardsStr }, 'Hole cards sent to coordinator for spectators');
   }
 
   /**
@@ -560,6 +662,12 @@ export class PokerAgent {
         const gameState = await this.contract.getGame(gameId as `0x${string}`);
 
         const phase = PHASE_MAP[gameState.phase];
+
+        // Detect phase transitions and notify coordinator for spectator pauses
+        if (activeGame.lastKnownPhase && activeGame.lastKnownPhase !== phase) {
+          await this.handlePhaseChange(gameId, activeGame.lastKnownPhase, phase);
+        }
+        activeGame.lastKnownPhase = phase;
 
         // Game is complete
         if (phase === 'complete') {
@@ -627,8 +735,11 @@ export class PokerAgent {
    * Look for games to join or create (fallback when coordinator matchmaking unavailable)
    */
   private async lookForGames(): Promise<void> {
-    // Only look if we don't have too many active games
-    if (this.activeGames.size >= 3) return;
+    // Only look if we're not already in a game (strict single-game rule)
+    if (this.activeGames.size >= 1) return;
+
+    // Don't look if locked (processing another game operation)
+    if (gameOperationLock) return;
 
     // If queued for coordinator matchmaking, don't do manual search
     if (this.isQueuedForMatch) {
@@ -711,22 +822,21 @@ export class PokerAgent {
     const balance = await this.wallet.getBalance();
     this.bankroll.updateBalance(balance);
 
-    // Wager based on configured max wager percent, minimum 0.001 ETH (matches contract MIN_WAGER)
-    const minWager = 1000000000000000n; // 0.001 ETH - must match contract
-    const wagerPercent = config.maxWagerPercent || 5;
-    const wagerAmount = balance * BigInt(Math.floor(wagerPercent * 10)) / 1000n; // maxWagerPercent of balance
-    const finalWager = wagerAmount < minWager ? minWager : wagerAmount;
+    // Fixed entry fee: 0.01 MON
+    const FIXED_ENTRY_FEE = 10000000000000000n; // 0.01 MON
+    const GAS_BUFFER = 4000000000000000n; // 0.004 MON for gas
+    const minRequired = FIXED_ENTRY_FEE + GAS_BUFFER;
 
-    // Need at least minimum wager in wallet
-    if (balance < minWager) {
-      logger.debug({ balance: balance.toString(), minWager: minWager.toString() }, 'Balance too low to create game');
+    // Need enough for entry fee + gas
+    if (balance < minRequired) {
+      logger.debug({ balance: balance.toString(), required: minRequired.toString() }, 'Balance too low for fixed entry fee');
       return;
     }
 
-    logger.info({ wager: finalWager.toString(), balance: balance.toString() }, 'Attempting to create game (fallback mode)');
+    logger.info({ wager: FIXED_ENTRY_FEE.toString(), balance: balance.toString() }, 'Attempting to create game (fallback mode)');
 
     try {
-      await this.createGame(finalWager);
+      await this.createGame(FIXED_ENTRY_FEE);
     } catch (error) {
       logger.error({ error }, 'Failed to create game');
     }
@@ -877,6 +987,12 @@ export class PokerAgent {
       ? communityCards.map(c => cardToString(c)).join(' ')
       : undefined;
 
+    // Calculate thinking delay first so we can notify frontend of turn duration
+    const thinkingDelay = this.calculateThinkingDelay(decision);
+
+    // Notify coordinator that our turn has started (for frontend timer display)
+    this.sendTurnStartToCoordinator(activeGame.gameId, thinkingDelay);
+
     // Send thought BEFORE action for spectator experience
     // This gives viewers time to see the thought before the action happens
     await this.sendThoughtToCoordinator(
@@ -897,8 +1013,6 @@ export class PokerAgent {
     );
 
     // Spectator delay - give viewers time to read the thought
-    // Bigger decisions get longer thinking time
-    const thinkingDelay = this.calculateThinkingDelay(decision);
     logger.debug({ thinkingDelay, action: decision.action }, 'Applying spectator delay');
     await this.sleep(thinkingDelay);
 
@@ -918,21 +1032,21 @@ export class PokerAgent {
    * More complex decisions = longer thinking time (for spectator experience)
    */
   private calculateThinkingDelay(decision: { action: string; amount?: bigint; confidence?: number }): number {
-    const baseDelay = 2000; // 2 seconds minimum
+    const baseDelay = 5000; // 5 seconds minimum for spectator experience
 
     // Lower confidence = more "thinking"
     const confidenceModifier = decision.confidence
-      ? Math.max(0, (1 - decision.confidence) * 2000) // Up to 2 extra seconds for low confidence
-      : 500;
+      ? Math.max(0, (1 - decision.confidence) * 3000) // Up to 3 extra seconds for low confidence
+      : 1000;
 
     // All-in and raise decisions take longer
     let actionModifier = 0;
     if (decision.action === 'all-in') {
-      actionModifier = 1500; // Big decision
+      actionModifier = 2000; // Big decision
     } else if (decision.action === 'raise') {
-      actionModifier = 1000;
+      actionModifier = 1500;
     } else if (decision.action === 'call') {
-      actionModifier = 500;
+      actionModifier = 1000;
     }
 
     // Add some randomness (500-1500ms) to feel more natural
@@ -940,8 +1054,8 @@ export class PokerAgent {
 
     const totalDelay = baseDelay + confidenceModifier + actionModifier + randomModifier;
 
-    // Cap at 5 seconds to not make games too slow
-    return Math.min(totalDelay, 5000);
+    // Cap at 8 seconds for spectator-friendly pace
+    return Math.min(totalDelay, 8000);
   }
 
   /**
@@ -955,6 +1069,42 @@ export class PokerAgent {
       activeGame.holeCards,
       activeGame.salt
     );
+  }
+
+  /**
+   * Handle phase transitions for spectator experience
+   * Notifies coordinator and adds pauses between phases
+   */
+  private async handlePhaseChange(gameId: string, oldPhase: string, newPhase: string): Promise<void> {
+    logger.info({ gameId, oldPhase, newPhase }, 'Phase changed');
+
+    // Determine pause duration based on phase
+    let pauseDurationMs = 0;
+    if (newPhase === 'flop' || newPhase === 'turn' || newPhase === 'river') {
+      pauseDurationMs = 3000; // 3 seconds to see community cards
+    } else if (newPhase === 'showdown') {
+      pauseDurationMs = 5000; // 5 seconds to see final hands
+    }
+
+    // Notify coordinator of phase change
+    if (this.coordinatorWs && this.coordinatorWs.readyState === WebSocket.OPEN) {
+      this.coordinatorWs.send(
+        JSON.stringify({
+          type: 'phase_changed',
+          gameId,
+          phase: newPhase,
+          previousPhase: oldPhase,
+          pauseDurationMs,
+          timestamp: Date.now(),
+        })
+      );
+    }
+
+    // Apply spectator pause
+    if (pauseDurationMs > 0) {
+      logger.debug({ gameId, phase: newPhase, pauseDurationMs }, 'Applying phase pause for spectators');
+      await this.sleep(pauseDurationMs);
+    }
   }
 
   /**
@@ -1035,36 +1185,61 @@ export class PokerAgent {
       }
     }
 
+    // Send winner celebration for spectator experience
+    if (winner && this.coordinatorWs && this.coordinatorWs.readyState === WebSocket.OPEN) {
+      const winnerName = winner.toLowerCase() === this.wallet.address.toLowerCase()
+        ? this.personality.getPersonality().name
+        : 'Opponent';
+
+      this.coordinatorWs.send(
+        JSON.stringify({
+          type: 'winner_celebration',
+          gameId,
+          winnerAddress: winner,
+          winnerName,
+          pot: gameState.mainPot.toString(),
+          celebrationDurationMs: 5000,
+          timestamp: Date.now(),
+        })
+      );
+
+      // Wait for celebration to display
+      logger.debug({ gameId, winner: winnerName }, 'Winner celebration pause for spectators');
+      await this.sleep(5000);
+    }
+
     this.activeGames.delete(gameId);
 
     // Update balance
     const newBalance = await this.wallet.getBalance();
     this.bankroll.updateBalance(newBalance);
 
+    // Fixed entry fee for requeue
+    const FIXED_ENTRY_FEE = 10000000000000000n; // 0.01 MON
+
     // Notify coordinator that game is finished and requeue
     if (this.coordinatorWs && this.coordinatorWs.readyState === WebSocket.OPEN) {
-      const wagerPercent = config.maxWagerPercent || 5;
-      const maxWager = newBalance * BigInt(Math.floor(wagerPercent * 10)) / 1000n;
-      const minWager = 1000000000000000n;
-      const effectiveMaxWager = maxWager < minWager ? minWager : maxWager;
-
       this.coordinatorWs.send(
         JSON.stringify({
           type: 'game_finished',
+          gameId,
           address: this.wallet.address,
           won,
           balance: newBalance.toString(),
-          maxWager: effectiveMaxWager.toString(),
-          autoRequeue: true, // Automatically queue for next game
+          maxWager: FIXED_ENTRY_FEE.toString(), // Always use fixed entry fee
+          autoRequeue: this.activeGames.size === 0, // Only requeue if no other active games
         })
       );
 
-      logger.info({ won, newBalance: newBalance.toString() }, 'Notified coordinator of game completion');
+      logger.info({ won, newBalance: newBalance.toString(), remainingGames: this.activeGames.size }, 'Notified coordinator of game completion');
     }
 
-    // Signal ready for next game
-    this.isQueuedForMatch = false;
-    setTimeout(() => this.signalReadyToPlay(), 3000);
+    // Only signal ready for next game if we have no other active games
+    if (this.activeGames.size === 0) {
+      this.isQueuedForMatch = false;
+      gameOperationLock = false; // Ensure lock is released
+      setTimeout(() => this.signalReadyToPlay(), 15000); // 15 second delay between games to conserve tokens
+    }
   }
 
   /**
