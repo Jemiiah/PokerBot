@@ -351,29 +351,51 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
 
     const unsubscribe = realGameService.onMessage((message) => {
       switch (message.type) {
-        case 'game_started':
-        case 'game_created':
-        case 'match_created':
+        case "game_started":
+        case "game_created":
+        case "match_created":
           setCurrentGameId(message.gameId);
           // Watch this game
           realGameService.watchGame(message.gameId);
           // Update active players from full player list (if available)
-          if ('playerNames' in message && Array.isArray(message.playerNames)) {
+          if ("playerNames" in message && Array.isArray(message.playerNames)) {
             const players = message.playerNames
               .map((name: string) => name.toLowerCase() as AgentId)
-              .filter((id: AgentId) => ['shadow', 'storm', 'sage', 'blaze', 'ember', 'frost', 'viper', 'titan'].includes(id));
+              .filter((id: AgentId) =>
+                [
+                  "shadow",
+                  "storm",
+                  "sage",
+                  "blaze",
+                  "ember",
+                  "frost",
+                  "viper",
+                  "titan",
+                ].includes(id),
+              );
             if (players.length > 0) {
               setActivePlayers(players);
               // Also update the store's activePlayers
               store.setActivePlayers(players);
             }
-          } else if ('creatorName' in message && message.creatorName) {
+          } else if ("creatorName" in message && message.creatorName) {
             // Fallback to creator only
             const creatorId = message.creatorName.toLowerCase() as AgentId;
-            if (['shadow', 'storm', 'sage', 'ember', 'blaze', 'frost', 'viper', 'titan'].includes(creatorId)) {
-              setActivePlayers(prev => {
+            if (
+              [
+                "shadow",
+                "storm",
+                "sage",
+                "ember",
+                "blaze",
+                "frost",
+                "viper",
+                "titan",
+              ].includes(creatorId)
+            ) {
+              setActivePlayers((prev) => {
                 if (!prev.includes(creatorId)) {
-                  return [creatorId, ...prev.filter(id => id !== creatorId)];
+                  return [creatorId, ...prev.filter((id) => id !== creatorId)];
                 }
                 return prev;
               });
@@ -381,63 +403,91 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
           }
           break;
 
-        case 'subscribed':
+        case "subscribed":
           if (message.gameId) {
             setCurrentGameId(message.gameId);
           }
           // Update active players from match data
-          if ('match' in message && message.match && message.match.playerNames) {
+          if ("match" in message && message.match && message.match.playerNames) {
             const players = message.match.playerNames
               .map((name: string) => name.toLowerCase() as AgentId)
-              .filter((id: AgentId) => ['shadow', 'storm', 'sage', 'blaze', 'ember', 'frost', 'viper', 'titan'].includes(id));
+              .filter((id: AgentId) =>
+                [
+                  "shadow",
+                  "storm",
+                  "sage",
+                  "blaze",
+                  "ember",
+                  "frost",
+                  "viper",
+                  "titan",
+                ].includes(id),
+              );
             if (players.length > 0) {
               setActivePlayers(players);
             }
           }
           break;
 
-        case 'player_joined':
+        case "player_joined":
           // Update active players based on who joined
-          if ('playerNames' in message && message.playerNames) {
+          if ("playerNames" in message && message.playerNames) {
             const players = message.playerNames
               .map((name: string) => name.toLowerCase() as AgentId)
-              .filter((id: AgentId) => ['shadow', 'storm', 'sage', 'blaze', 'ember', 'frost', 'viper', 'titan'].includes(id));
+              .filter((id: AgentId) =>
+                [
+                  "shadow",
+                  "storm",
+                  "sage",
+                  "blaze",
+                  "ember",
+                  "frost",
+                  "viper",
+                  "titan",
+                ].includes(id),
+              );
             if (players.length > 0) {
               setActivePlayers(players);
             }
           }
           break;
 
-        case 'agent_thought':
+        case "agent_thought":
           // Update phase from thought context if available
           break;
 
-        case 'game_ended':
+        case "game_ended":
           // Game ended, wait for next game
           setCurrentGameId(null);
           setIsMatchmaking(false);
           break;
 
-        case 'queue_update':
-          // Update queued agents list
-          if ('agents' in message && Array.isArray(message.agents)) {
-            setQueuedAgents(message.agents.map((a: any) => ({
-              address: a.address || '',
-              name: a.name || 'Unknown',
-              balance: a.balance,
-            })));
+        case "queue_state":
+        case "agent_queued":
+        case "agent_dequeued":
+          // Update queued agents from coordinator
+          if ("queuedAgents" in message && Array.isArray(message.queuedAgents)) {
+            setQueuedAgents(
+              message.queuedAgents.map((a: any) => ({
+                address: a.address || "",
+                name: a.name || "Unknown",
+                balance: a.balance,
+              })),
+            );
           }
-          if ('queueSize' in message) {
+          if ("queueSize" in message) {
             setIsMatchmaking((message.queueSize as number) >= 2);
           }
           break;
 
-        case 'matchmaking_status':
-          if ('isMatchmaking' in message) {
-            setIsMatchmaking(message.isMatchmaking as boolean);
+        case "matchmaking_started":
+          // Match is being created
+          if ("isMatchmaking" in message) {
+            setIsMatchmaking(true);
           }
-          if ('queuedAgents' in message && Array.isArray(message.queuedAgents)) {
-            setQueuedAgents(message.queuedAgents);
+          if ("players" in message && Array.isArray(message.players)) {
+            // Clear queue when match starts
+            setQueuedAgents([]);
           }
           break;
       }
