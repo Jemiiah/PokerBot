@@ -17,7 +17,7 @@ const COORDINATOR_WS_URL = process.env.COORDINATOR_WS_URL || 'ws://localhost:808
 const BASE_POLL_INTERVAL = 8000; // 8 seconds base polling interval
 const MAX_POLL_INTERVAL = 30000; // Max 30 seconds on backoff
 const STAGGER_DELAY_PER_AGENT = 1000; // 1 second stagger per agent
-const READY_SIGNAL_INTERVAL = 10000; // Signal ready every 10 seconds if not in game
+// const READY_SIGNAL_INTERVAL = 10000; // Signal ready every 10 seconds if not in game
 
 // Agent name to stagger index mapping for deterministic staggering
 const AGENT_STAGGER_INDEX: Record<string, number> = {
@@ -217,38 +217,52 @@ export class PokerAgent {
    */
   private async handleCoordinatorMessage(message: any): Promise<void> {
     switch (message.type) {
-      case 'pong':
+      case "pong":
         // Heartbeat response
         break;
 
-      case 'registered':
-        logger.info('Registered with coordinator');
+      case "ready_for_next_game":
+        // Manual trigger to start next game
+        logger.info("Received ready_for_next_game command - rejoining queue");
+        if (this.activeGames.size === 0 && !this.isQueuedForMatch && !gameOperationLock) {
+          this.signalReadyToPlay();
+        }
+        break;
+
+      case "registered":
+        logger.info("Registered with coordinator");
         // Signal ready to play after registration
         this.signalReadyToPlay();
         break;
 
-      case 'queued':
+      case "queued":
         this.isQueuedForMatch = true;
-        logger.info({ queueSize: message.queueSize }, 'Added to matchmaking queue');
+        logger.info({ queueSize: message.queueSize }, "Added to matchmaking queue");
         break;
 
-      case 'dequeued':
+      case "dequeued":
         this.isQueuedForMatch = false;
-        logger.info('Removed from matchmaking queue');
+        logger.info("Removed from matchmaking queue");
         break;
 
-      case 'create_game_command':
+      case "create_game_command":
         // Coordinator tells us to create a game
         // Check if we're already in a game or processing another command
         if (this.activeGames.size > 0 || gameOperationLock) {
-          logger.warn({ activeGames: this.activeGames.size, locked: gameOperationLock }, 'Ignoring create_game_command - already in game or locked');
+          logger.warn(
+            { activeGames: this.activeGames.size, locked: gameOperationLock },
+            "Ignoring create_game_command - already in game or locked",
+          );
           return;
         }
 
-        logger.info({
-          wager: message.wagerAmount,
-          expectedPlayers: message.expectedPlayers?.length,
-        }, 'Received create_game_command from coordinator');
+        logger.info(
+          {
+            wager: message.wagerAmount,
+            expectedPlayers: message.expectedPlayers?.length,
+          },
+          "Received create_game_command from coordinator",
+        );
 
         gameOperationLock = true;
         this.pendingJoiners = message.expectedPlayers || [];
@@ -256,34 +270,40 @@ export class PokerAgent {
         await this.createGameByCommand(
           BigInt(message.wagerAmount),
           message.minPlayers || 2,
-          message.maxPlayers || 4
+          message.maxPlayers || 4,
         );
         break;
 
-      case 'join_game_command':
+      case "join_game_command":
         // Coordinator tells us to join a specific game
         // Check if we're already in a game or processing another command
         if (this.activeGames.size > 0 || gameOperationLock) {
-          logger.warn({ activeGames: this.activeGames.size, locked: gameOperationLock }, 'Ignoring join_game_command - already in game or locked');
+          logger.warn(
+            { activeGames: this.activeGames.size, locked: gameOperationLock },
+            "Ignoring join_game_command - already in game or locked",
+          );
           return;
         }
 
-        logger.info({
-          gameId: message.gameId,
-          wager: message.wagerAmount,
-          creator: message.creatorName,
-        }, 'Received join_game_command from coordinator');
+        logger.info(
+          {
+            gameId: message.gameId,
+            wager: message.wagerAmount,
+            creator: message.creatorName,
+          },
+          "Received join_game_command from coordinator",
+        );
 
         gameOperationLock = true;
 
         await this.joinGameByCommand(
           message.gameId as `0x${string}`,
-          BigInt(message.wagerAmount)
+          BigInt(message.wagerAmount),
         );
         break;
 
       default:
-        logger.debug({ type: message.type }, 'Unknown coordinator message');
+        logger.debug({ type: message.type }, "Unknown coordinator message");
     }
   }
 
@@ -469,14 +489,14 @@ export class PokerAgent {
     // Signal ready immediately
     this.signalReadyToPlay();
 
-    // Then periodically re-signal if not in a game
-    // Increased interval to reduce race conditions
-    this.readySignalTimer = setInterval(() => {
-      // Only signal if: not in game, not queued, not processing a command
-      if (this.activeGames.size === 0 && !this.isQueuedForMatch && !gameOperationLock) {
-        this.signalReadyToPlay();
-      }
-    }, READY_SIGNAL_INTERVAL);
+    // // Then periodically re-signal if not in a game
+    // // Increased interval to reduce race conditions
+    // this.readySignalTimer = setInterval(() => {
+    //   // Only signal if: not in game, not queued, not processing a command
+    //   if (this.activeGames.size === 0 && !this.isQueuedForMatch && !gameOperationLock) {
+    //     this.signalReadyToPlay();
+    //   }
+    // }, READY_SIGNAL_INTERVAL);
   }
 
   /**
@@ -1227,7 +1247,8 @@ export class PokerAgent {
           won,
           balance: newBalance.toString(),
           maxWager: FIXED_ENTRY_FEE.toString(), // Always use fixed entry fee
-          autoRequeue: this.activeGames.size === 0, // Only requeue if no other active games
+          // autoRequeue: this.activeGames.size === 0, // Only requeue if no other active games
+          autoRequeue: false,
         })
       );
 
@@ -1238,7 +1259,7 @@ export class PokerAgent {
     if (this.activeGames.size === 0) {
       this.isQueuedForMatch = false;
       gameOperationLock = false; // Ensure lock is released
-      setTimeout(() => this.signalReadyToPlay(), 15000); // 15 second delay between games to conserve tokens
+      // setTimeout(() => this.signalReadyToPlay(), 15000); // 15 second delay between games to conserve tokens
     }
   }
 

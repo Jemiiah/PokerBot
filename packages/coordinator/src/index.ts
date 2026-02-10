@@ -544,12 +544,15 @@ async function start() {
   const fastify = Fastify({ logger: true });
 
   // Add CORS headers
-  fastify.addHook('onRequest', async (request, reply) => {
-    reply.header('Access-Control-Allow-Origin', '*');
-    reply.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    reply.header('Access-Control-Expose-Headers', 'X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
-    if (request.method === 'OPTIONS') {
+  fastify.addHook("onRequest", async (request, reply) => {
+    reply.header("Access-Control-Allow-Origin", "*");
+    reply.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    reply.header(
+      "Access-Control-Expose-Headers",
+      "X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset",
+    );
+    if (request.method === "OPTIONS") {
       reply.send();
     }
   });
@@ -573,7 +576,10 @@ async function start() {
     verifyTransaction: async (_txHash, _expectedAction, _walletAddress) => {
       // TODO: Implement actual on-chain verification via viem
       // For now, return true (trust agent's tx submission)
-      logger.debug({ txHash: _txHash, action: _expectedAction }, 'Transaction verification (placeholder)');
+      logger.debug(
+        { txHash: _txHash, action: _expectedAction },
+        "Transaction verification (placeholder)",
+      );
       return true;
     },
     broadcastToFrontends,
@@ -583,9 +589,9 @@ async function start() {
   registerApiRoutes(fastify, apiContext);
 
   // REST endpoints
-  fastify.get('/health', async () => {
+  fastify.get("/health", async () => {
     return {
-      status: 'ok',
+      status: "ok",
       matches: matches.size,
       agents: connectedAgents.size,
       externalAgents: connectedExternalAgents.size,
@@ -594,43 +600,70 @@ async function start() {
     };
   });
 
+  // Manual restart - trigger agents to rejoin queue
+  fastify.post("/start-next-hand", async () => {
+    logger.info("Manual start-next-hand triggered");
+
+    let notified = 0;
+
+    // Send ready_for_next_game to all idle agents
+    for (const [_, agent] of connectedAgents) {
+      if (
+        !agent.inGame &&
+        !agent.currentGameId &&
+        agent.socket.readyState === WebSocket.OPEN
+      ) {
+        agent.socket.send(
+          JSON.stringify({
+            type: "ready_for_next_game",
+            timestamp: Date.now(),
+          }),
+        );
+        notified++;
+        logger.info({ agent: agent.name }, "Sent ready_for_next_game");
+      }
+    }
+
+    return { success: true, agentsNotified: notified };
+  });
+
   // Get arena configuration (entry fee, etc.)
-  fastify.get('/config', async () => {
+  fastify.get("/config", async () => {
     return {
       entryFee: FIXED_ENTRY_FEE.toString(),
-      entryFeeFormatted: '0.01 MON',
+      entryFeeFormatted: "0.01 MON",
       minPlayers: MIN_PLAYERS_FOR_MATCH,
       maxPlayers: MAX_PLAYERS_FOR_MATCH,
     };
   });
 
-  fastify.get('/matches', async () => {
-    return Array.from(matches.values()).map(m => ({
+  fastify.get("/matches", async () => {
+    return Array.from(matches.values()).map((m) => ({
       ...m,
       wagerAmount: m.wagerAmount.toString(),
     }));
   });
 
-  fastify.get('/matches/pending', async () => {
+  fastify.get("/matches/pending", async () => {
     return Array.from(matches.values())
-      .filter(m => m.status === 'pending')
-      .map(m => ({
+      .filter((m) => m.status === "pending")
+      .map((m) => ({
         ...m,
         wagerAmount: m.wagerAmount.toString(),
       }));
   });
 
-  fastify.get('/leaderboard', async () => {
+  fastify.get("/leaderboard", async () => {
     // TODO: Fetch from Tournament contract
     return [];
   });
 
   // Get single game state
-  fastify.get<{ Params: { gameId: string } }>('/games/:gameId', async (request) => {
+  fastify.get<{ Params: { gameId: string } }>("/games/:gameId", async (request) => {
     const { gameId } = request.params;
     const match = matches.get(gameId);
     if (!match) {
-      return { error: 'Game not found' };
+      return { error: "Game not found" };
     }
     return {
       ...match,
@@ -639,8 +672,8 @@ async function start() {
   });
 
   // Get connected agents
-  fastify.get('/agents', async () => {
-    return Array.from(connectedAgents.values()).map(a => ({
+  fastify.get("/agents", async () => {
+    return Array.from(connectedAgents.values()).map((a) => ({
       address: a.address,
       name: a.name,
       lastPing: a.lastPing,
@@ -651,10 +684,10 @@ async function start() {
   });
 
   // Get matchmaking queue
-  fastify.get('/queue', async () => {
+  fastify.get("/queue", async () => {
     return {
       queueSize: matchmakingQueue.length,
-      agents: matchmakingQueue.map(a => ({
+      agents: matchmakingQueue.map((a) => ({
         address: a.address,
         name: a.name,
         balance: a.balance.toString(),
@@ -667,35 +700,37 @@ async function start() {
 
   // WebSocket for real-time updates
   fastify.register(async function (fastify) {
-    fastify.get('/ws', { websocket: true }, (connection, _req) => {
+    fastify.get("/ws", { websocket: true }, (connection, _req) => {
       const socket = connection.socket;
       let clientId: string | null = null;
-      let clientType: 'agent' | 'frontend' | 'external_agent' | null = null;
+      let clientType: "agent" | "frontend" | "external_agent" | null = null;
 
-      logger.info('New WebSocket connection');
+      logger.info("New WebSocket connection");
 
-      socket.on('message', (message: Buffer) => {
+      socket.on("message", (message: Buffer) => {
         try {
           const data = JSON.parse(message.toString());
 
           // Track client type based on first message
           if (!clientType) {
             // Phase 6: Handle external agent API authentication via WebSocket
-            if (data.type === 'api_auth') {
+            if (data.type === "api_auth") {
               const apiKey = data.apiKey;
               const agent = validateApiKey(apiKey);
 
               if (!agent) {
-                socket.send(JSON.stringify({
-                  type: 'error',
-                  code: 'INVALID_API_KEY',
-                  message: 'Invalid or expired API key',
-                }));
+                socket.send(
+                  JSON.stringify({
+                    type: "error",
+                    code: "INVALID_API_KEY",
+                    message: "Invalid or expired API key",
+                  }),
+                );
                 socket.close();
                 return;
               }
 
-              clientType = 'external_agent';
+              clientType = "external_agent";
               clientId = apiKey;
 
               // Store connected external agent
@@ -711,79 +746,99 @@ async function start() {
                 currentGameId: null,
               });
 
-              logger.info({
-                agentName: agent.agentName,
-                walletAddress: agent.walletAddress,
-              }, 'External agent authenticated via WebSocket');
+              logger.info(
+                {
+                  agentName: agent.agentName,
+                  walletAddress: agent.walletAddress,
+                },
+                "External agent authenticated via WebSocket",
+              );
 
-              socket.send(JSON.stringify({
-                type: 'api_authenticated',
-                agentName: agent.agentName,
-                walletAddress: agent.walletAddress,
-              }));
+              socket.send(
+                JSON.stringify({
+                  type: "api_authenticated",
+                  agentName: agent.agentName,
+                  walletAddress: agent.walletAddress,
+                }),
+              );
 
               // Send current queue state
-              socket.send(JSON.stringify({
-                type: 'queue_update',
-                position: getQueuePosition(agent.walletAddress),
-                queueSize: matchmakingQueue.length,
-                estimatedWait: getQueuePosition(agent.walletAddress) > 0 ? '~30 seconds' : 'Not in queue',
-                timestamp: Date.now(),
-              }));
+              socket.send(
+                JSON.stringify({
+                  type: "queue_update",
+                  position: getQueuePosition(agent.walletAddress),
+                  queueSize: matchmakingQueue.length,
+                  estimatedWait:
+                    getQueuePosition(agent.walletAddress) > 0
+                      ? "~30 seconds"
+                      : "Not in queue",
+                  timestamp: Date.now(),
+                }),
+              );
 
               return;
             }
 
-            if (data.type === 'register') {
-              clientType = 'agent';
+            if (data.type === "register") {
+              clientType = "agent";
               clientId = data.address;
-            } else if (data.type === 'frontend_connect') {
-              clientType = 'frontend';
+            } else if (data.type === "frontend_connect") {
+              clientType = "frontend";
               clientId = generateFrontendId();
               connectedFrontends.set(clientId, {
                 socket,
                 subscribedGames: new Set(),
                 connectedAt: Date.now(),
               });
-              logger.info({ clientId }, 'Frontend connected');
-              socket.send(JSON.stringify({ type: 'frontend_connected', clientId }));
+              logger.info({ clientId }, "Frontend connected");
+              socket.send(JSON.stringify({ type: "frontend_connected", clientId }));
 
               // Send current queue state
-              socket.send(JSON.stringify({
-                type: 'queue_state',
-                queueSize: matchmakingQueue.length,
-                queuedAgents: matchmakingQueue.map(a => ({ address: a.address, name: a.name })),
-              }));
+              socket.send(
+                JSON.stringify({
+                  type: "queue_state",
+                  queueSize: matchmakingQueue.length,
+                  queuedAgents: matchmakingQueue.map((a) => ({
+                    address: a.address,
+                    name: a.name,
+                  })),
+                }),
+              );
 
               // Send any active games so frontend can subscribe
               for (const [gameId, match] of matches) {
-                if (match.status === 'active' || match.status === 'pending') {
-                  socket.send(JSON.stringify({
-                    type: 'match_created',
-                    gameId: match.gameId,
-                    creator: match.players[0],
-                    creatorName: match.playerNames[0],
-                    players: match.players.map((addr, i) => ({
-                      address: addr,
-                      name: match.playerNames[i]
-                    })),
-                    wagerAmount: match.wagerAmount.toString(),
-                    status: match.status,
-                  }));
-                  logger.info({ clientId, gameId }, 'Sent active game to new frontend');
+                if (match.status === "active" || match.status === "pending") {
+                  socket.send(
+                    JSON.stringify({
+                      type: "match_created",
+                      gameId: match.gameId,
+                      creator: match.players[0],
+                      creatorName: match.playerNames[0],
+                      players: match.players.map((addr, i) => ({
+                        address: addr,
+                        name: match.playerNames[i],
+                      })),
+                      wagerAmount: match.wagerAmount.toString(),
+                      status: match.status,
+                    }),
+                  );
+                  logger.info({ clientId, gameId }, "Sent active game to new frontend");
                 }
               }
 
               // Notify all agents that a spectator is now watching - games can start
               broadcast({
-                type: 'spectator_ready',
+                type: "spectator_ready",
                 frontendCount: connectedFrontends.size,
-                message: 'A spectator has connected. Matchmaking is now active.',
+                message: "A spectator has connected. Matchmaking is now active.",
               });
 
               // Immediately try to create a match now that a frontend is connected
               if (matchmakingQueue.length >= MIN_PLAYERS_FOR_MATCH) {
-                logger.info({ queueSize: matchmakingQueue.length }, 'Frontend connected - triggering matchmaking');
+                logger.info(
+                  { queueSize: matchmakingQueue.length },
+                  "Frontend connected - triggering matchmaking",
+                );
                 tryCreateMatch();
               }
 
@@ -793,11 +848,11 @@ async function start() {
 
           handleMessage(socket, data, clientId, clientType);
         } catch (error) {
-          logger.error({ error }, 'Failed to parse message');
+          logger.error({ error }, "Failed to parse message");
         }
       });
 
-      socket.on('close', () => {
+      socket.on("close", () => {
         // Remove from connected agents
         for (const [address, agent] of connectedAgents) {
           if (agent.socket === socket) {
@@ -805,11 +860,11 @@ async function start() {
             removeFromMatchmakingQueue(address);
             connectedAgents.delete(address);
             agentNameRegistry.delete(address.toLowerCase());
-            logger.info({ address, name: agent.name }, 'Agent disconnected');
+            logger.info({ address, name: agent.name }, "Agent disconnected");
 
             // Notify frontends
             broadcastToAllFrontends({
-              type: 'agent_disconnected',
+              type: "agent_disconnected",
               address,
               name: agent.name,
             });
@@ -820,16 +875,17 @@ async function start() {
         for (const [id, frontend] of connectedFrontends) {
           if (frontend.socket === socket) {
             connectedFrontends.delete(id);
-            logger.info({ id }, 'Frontend disconnected');
+            logger.info({ id }, "Frontend disconnected");
 
             // Notify agents if no more frontends are connected
             if (connectedFrontends.size === 0) {
               broadcast({
-                type: 'spectator_disconnected',
+                type: "spectator_disconnected",
                 frontendCount: 0,
-                message: 'No spectators connected. Matchmaking paused until a spectator joins.',
+                message:
+                  "No spectators connected. Matchmaking paused until a spectator joins.",
               });
-              logger.warn('All frontends disconnected - matchmaking paused');
+              logger.warn("All frontends disconnected - matchmaking paused");
             }
             break;
           }
@@ -840,14 +896,17 @@ async function start() {
             // Remove from matchmaking queue if in it
             removeFromQueueByWallet(externalAgent.walletAddress);
             connectedExternalAgents.delete(apiKey);
-            logger.info({
-              agentName: externalAgent.agentName,
-              walletAddress: externalAgent.walletAddress,
-            }, 'External agent disconnected');
+            logger.info(
+              {
+                agentName: externalAgent.agentName,
+                walletAddress: externalAgent.walletAddress,
+              },
+              "External agent disconnected",
+            );
 
             // Notify frontends
             broadcastToAllFrontends({
-              type: 'external_agent_disconnected',
+              type: "external_agent_disconnected",
               walletAddress: externalAgent.walletAddress,
               agentName: externalAgent.agentName,
             });
@@ -862,12 +921,12 @@ async function start() {
     socket: any,
     data: any,
     clientId: string | null,
-    clientType: 'agent' | 'frontend' | 'external_agent' | null
+    clientType: "agent" | "frontend" | "external_agent" | null,
   ) {
     switch (data.type) {
-      case 'register':
+      case "register":
         // Agent registration with name
-        const agentName = data.name || data.personality || 'Unknown';
+        const agentName = data.name || data.personality || "Unknown";
         const agentAddress = data.address.toLowerCase();
 
         connectedAgents.set(data.address, {
@@ -875,7 +934,7 @@ async function start() {
           name: agentName,
           socket,
           lastPing: Date.now(),
-          balance: BigInt(data.balance || '0'),
+          balance: BigInt(data.balance || "0"),
           ready: false,
           inGame: false,
           currentGameId: null,
@@ -884,50 +943,55 @@ async function start() {
         // Store name in registry for lookups
         agentNameRegistry.set(agentAddress, agentName);
 
-        logger.info({ address: data.address, name: agentName }, 'Agent registered');
-        socket.send(JSON.stringify({ type: 'registered', success: true }));
+        logger.info({ address: data.address, name: agentName }, "Agent registered");
+        socket.send(JSON.stringify({ type: "registered", success: true }));
 
         // Broadcast agent list update to frontends
         broadcastToAllFrontends({
-          type: 'agent_connected',
+          type: "agent_connected",
           address: data.address,
           name: agentName,
         });
         break;
 
-      case 'ready_to_play':
+      case "ready_to_play":
         // Agent signals ready for matchmaking
         const readyAgent = connectedAgents.get(data.address);
         if (readyAgent) {
-          const balance = BigInt(data.balance || '0');
-          const maxWager = BigInt(data.maxWager || '0');
+          const balance = BigInt(data.balance || "0");
+          const maxWager = BigInt(data.maxWager || "0");
           addToMatchmakingQueue(readyAgent, balance, maxWager);
-          socket.send(JSON.stringify({ type: 'queued', queueSize: matchmakingQueue.length }));
+          socket.send(
+            JSON.stringify({ type: "queued", queueSize: matchmakingQueue.length }),
+          );
         }
         break;
 
-      case 'cancel_ready':
+      case "cancel_ready":
         // Agent wants to leave the queue
         removeFromMatchmakingQueue(data.address);
         const cancelAgent = connectedAgents.get(data.address);
         if (cancelAgent) {
           cancelAgent.ready = false;
         }
-        socket.send(JSON.stringify({ type: 'dequeued' }));
+        socket.send(JSON.stringify({ type: "dequeued" }));
         break;
 
-      case 'game_created_by_command':
+      case "game_created_by_command":
         // Agent created a game as instructed - now tell others to join
         const gameId = data.gameId;
         const creatorAddr = data.creator.toLowerCase();
         const wager = BigInt(data.wagerAmount);
 
-        logger.info({
-          gameId,
-          creator: agentNameRegistry.get(creatorAddr),
-          wager: wager.toString(),
-          pendingJoiners: data.pendingJoiners?.length || 0,
-        }, 'Game created by coordinator command');
+        logger.info(
+          {
+            gameId,
+            creator: agentNameRegistry.get(creatorAddr),
+            wager: wager.toString(),
+            pendingJoiners: data.pendingJoiners?.length || 0,
+          },
+          "Game created by coordinator command",
+        );
 
         // Update creator's currentGameId with real game ID
         const creatorAgent = connectedAgents.get(data.creator);
@@ -936,7 +1000,7 @@ async function start() {
         }
 
         // Update joiners' currentGameId
-        for (const joinerInfo of (data.pendingJoiners || [])) {
+        for (const joinerInfo of data.pendingJoiners || []) {
           const joinerAgent = connectedAgents.get(joinerInfo.address);
           if (joinerAgent) {
             joinerAgent.currentGameId = gameId;
@@ -945,16 +1009,20 @@ async function start() {
         }
 
         // Track this match
-        const matchCreatorName = agentNameRegistry.get(creatorAddr) || 'Unknown';
-        const matchJoinerNames = (data.pendingJoiners || []).map((j: { address: string }) =>
-          agentNameRegistry.get(j.address.toLowerCase()) || 'Unknown'
+        const matchCreatorName = agentNameRegistry.get(creatorAddr) || "Unknown";
+        const matchJoinerNames = (data.pendingJoiners || []).map(
+          (j: { address: string }) =>
+            agentNameRegistry.get(j.address.toLowerCase()) || "Unknown",
         );
         matches.set(gameId, {
           gameId,
-          players: [data.creator, ...(data.pendingJoiners || []).map((j: { address: string }) => j.address)],
+          players: [
+            data.creator,
+            ...(data.pendingJoiners || []).map((j: { address: string }) => j.address),
+          ],
           playerNames: [matchCreatorName, ...matchJoinerNames],
           wagerAmount: wager,
-          status: 'active',
+          status: "active",
           minPlayers: MIN_PLAYERS_FOR_MATCH,
           maxPlayers: MAX_PLAYERS_FOR_MATCH,
           createdAt: Date.now(),
@@ -966,30 +1034,41 @@ async function start() {
             const joinerAgent = connectedAgents.get(joinerInfo.address);
             if (joinerAgent && joinerAgent.socket) {
               try {
-                joinerAgent.socket.send(JSON.stringify({
-                  type: 'join_game_command',
-                  gameId,
-                  wagerAmount: wager.toString(),
-                  creatorAddress: data.creator,
-                  creatorName: agentNameRegistry.get(creatorAddr) || 'Unknown',
-                }));
-                logger.info({
-                  agent: joinerAgent.name,
-                  gameId,
-                }, 'Sent join_game_command');
+                joinerAgent.socket.send(
+                  JSON.stringify({
+                    type: "join_game_command",
+                    gameId,
+                    wagerAmount: wager.toString(),
+                    creatorAddress: data.creator,
+                    creatorName: agentNameRegistry.get(creatorAddr) || "Unknown",
+                  }),
+                );
+                logger.info(
+                  {
+                    agent: joinerAgent.name,
+                    gameId,
+                  },
+                  "Sent join_game_command",
+                );
               } catch (error) {
-                logger.error({ error, agent: joinerAgent.name }, 'Failed to send join command');
+                logger.error(
+                  { error, agent: joinerAgent.name },
+                  "Failed to send join command",
+                );
               }
             }
           }
         }
 
         // Notify frontends with full player list
-        const allPlayers = [data.creator, ...(data.pendingJoiners || []).map((j: { address: string }) => j.address)];
+        const allPlayers = [
+          data.creator,
+          ...(data.pendingJoiners || []).map((j: { address: string }) => j.address),
+        ];
         const allPlayerNames = [matchCreatorName, ...matchJoinerNames];
 
         broadcastToAllFrontends({
-          type: 'match_created',
+          type: "match_created",
           gameId,
           creator: data.creator,
           creatorName: matchCreatorName,
@@ -1000,7 +1079,7 @@ async function start() {
 
         // Also send game_started so frontends set up activePlayers properly
         broadcastToAllFrontends({
-          type: 'game_started',
+          type: "game_started",
           gameId,
           players: allPlayers,
           playerNames: allPlayerNames,
@@ -1008,14 +1087,17 @@ async function start() {
         });
         break;
 
-      case 'game_finished':
+      case "game_finished":
         // Agent finished a game - mark as available
         const finishedAgent = connectedAgents.get(data.address);
         if (finishedAgent) {
           finishedAgent.inGame = false;
           finishedAgent.currentGameId = null;
           finishedAgent.ready = false;
-          logger.info({ agent: finishedAgent.name, won: data.won, gameId: data.gameId }, 'Agent finished game');
+          logger.info(
+            { agent: finishedAgent.name, won: data.won, gameId: data.gameId },
+            "Agent finished game",
+          );
 
           // Clean up match if this game exists
           if (data.gameId && matches.has(data.gameId)) {
@@ -1031,22 +1113,27 @@ async function start() {
 
                 // Phase 6: Also clean up external agents in this game
                 for (const [apiKey, extAgent] of connectedExternalAgents) {
-                  if (extAgent.walletAddress.toLowerCase() === playerAddr.toLowerCase() && extAgent.currentGameId === data.gameId) {
+                  if (
+                    extAgent.walletAddress.toLowerCase() === playerAddr.toLowerCase() &&
+                    extAgent.currentGameId === data.gameId
+                  ) {
                     extAgent.inGame = false;
                     extAgent.currentGameId = null;
 
                     // Update external agent stats
-                    const extAgentWon = data.won && data.address.toLowerCase() === extAgent.walletAddress.toLowerCase();
+                    const extAgentWon =
+                      data.won &&
+                      data.address.toLowerCase() === extAgent.walletAddress.toLowerCase();
                     updateAgentStats(apiKey, extAgentWon);
 
                     // Send game_result to external agent
                     sendToExternalAgent(extAgent.walletAddress, {
-                      type: 'game_result',
+                      type: "game_result",
                       gameId: data.gameId,
-                      winner: data.won ? data.address : 'opponent',
-                      winnerName: data.won ? finishedAgent?.name : 'Opponent',
-                      pot: data.pot || '0',
-                      yourResult: extAgentWon ? 'won' : 'lost',
+                      winner: data.won ? data.address : "opponent",
+                      winnerName: data.won ? finishedAgent?.name : "Opponent",
+                      pot: data.pot || "0",
+                      yourResult: extAgentWon ? "won" : "lost",
                       amountWon: extAgentWon ? data.pot : undefined,
                       amountLost: !extAgentWon ? match.wagerAmount.toString() : undefined,
                       timestamp: Date.now(),
@@ -1056,25 +1143,28 @@ async function start() {
               }
             }
             matches.delete(data.gameId);
-            logger.info({ gameId: data.gameId }, 'Match cleaned up from tracked games');
+            logger.info({ gameId: data.gameId }, "Match cleaned up from tracked games");
           }
 
           // Always send game_ended to frontends (even if match wasn't tracked)
           // This ensures UI cleanup for games created outside coordinator tracking
           if (data.gameId) {
             broadcastToAllFrontends({
-              type: 'game_ended',
+              type: "game_ended",
               gameId: data.gameId,
-              winner: data.won ? data.address : 'opponent',
-              winnerName: data.won ? finishedAgent?.name : 'Opponent',
+              winner: data.won ? data.address : "opponent",
+              winnerName: data.won ? finishedAgent?.name : "Opponent",
             });
-            logger.info({ gameId: data.gameId, agent: finishedAgent?.name }, 'Sent game_ended to frontends');
+            logger.info(
+              { gameId: data.gameId, agent: finishedAgent?.name },
+              "Sent game_ended to frontends",
+            );
           }
 
           // STRICT: Clear active game
           if (currentActiveGameId === data.gameId) {
             currentActiveGameId = null;
-            logger.info({ gameId: data.gameId }, 'Active game finished and cleared');
+            logger.info({ gameId: data.gameId }, "Active game finished and cleared");
           }
 
           // Auto-queue agent again if they want to continue playing
@@ -1090,41 +1180,44 @@ async function start() {
         }
         break;
 
-      case 'ping':
+      case "ping":
         const agent = connectedAgents.get(data.address);
         if (agent) {
           agent.lastPing = Date.now();
         }
-        socket.send(JSON.stringify({ type: 'pong' }));
+        socket.send(JSON.stringify({ type: "pong" }));
         break;
 
-      case 'match_created':
+      case "match_created":
         const creatorAddress = data.player.toLowerCase();
-        const creatorName = agentNameRegistry.get(creatorAddress) || 'Unknown';
+        const creatorName = agentNameRegistry.get(creatorAddress) || "Unknown";
 
         // Clear pending flag - game creation confirmed
         gameCreationPending = false;
 
         // STRICT: Set this as the active game
         currentActiveGameId = data.gameId;
-        logger.info({ gameId: data.gameId, creator: creatorName }, 'New active game created');
+        logger.info(
+          { gameId: data.gameId, creator: creatorName },
+          "New active game created",
+        );
 
         matches.set(data.gameId, {
           gameId: data.gameId,
           players: [data.player],
           playerNames: [creatorName],
           wagerAmount: BigInt(data.wagerAmount),
-          status: 'pending',
+          status: "pending",
           minPlayers: data.minPlayers || 2,
           maxPlayers: data.maxPlayers || 2, // STRICT: Always 2 players
           createdAt: Date.now(),
         });
 
-        broadcast({ type: 'new_match', match: { ...data, creatorName } });
+        broadcast({ type: "new_match", match: { ...data, creatorName } });
 
         // Notify frontends
         broadcastToAllFrontends({
-          type: 'game_created',
+          type: "game_created",
           gameId: data.gameId,
           player: data.player,
           playerName: creatorName,
@@ -1134,16 +1227,21 @@ async function start() {
         });
         break;
 
-      case 'match_joined':
+      case "match_joined":
         const match = matches.get(data.gameId);
         if (match) {
           const joinerAddress = data.player.toLowerCase();
-          const joinerName = agentNameRegistry.get(joinerAddress) || 'Unknown';
+          const joinerName = agentNameRegistry.get(joinerAddress) || "Unknown";
 
           // IMPORTANT: Check if player is already in the match to prevent duplicates
-          const alreadyInMatch = match.players.some(p => p.toLowerCase() === joinerAddress);
+          const alreadyInMatch = match.players.some(
+            (p) => p.toLowerCase() === joinerAddress,
+          );
           if (alreadyInMatch) {
-            logger.debug({ agent: joinerName, gameId: data.gameId }, 'Player already in match, ignoring duplicate join');
+            logger.debug(
+              { agent: joinerName, gameId: data.gameId },
+              "Player already in match, ignoring duplicate join",
+            );
             break;
           }
 
@@ -1152,12 +1250,12 @@ async function start() {
 
           // Check if game should start
           if (match.players.length >= match.maxPlayers) {
-            match.status = 'active';
+            match.status = "active";
             match.startedAt = Date.now();
           }
 
           broadcast({
-            type: 'match_started',
+            type: "match_started",
             gameId: data.gameId,
             players: match.players,
             playerNames: match.playerNames,
@@ -1165,7 +1263,7 @@ async function start() {
 
           // Notify frontends watching this game
           broadcastToFrontends(data.gameId, {
-            type: 'player_joined',
+            type: "player_joined",
             gameId: data.gameId,
             player: data.player,
             playerName: joinerName,
@@ -1174,9 +1272,9 @@ async function start() {
             playerNames: match.playerNames,
           });
 
-          if (match.status === 'active') {
+          if (match.status === "active") {
             broadcastToFrontends(data.gameId, {
-              type: 'game_started',
+              type: "game_started",
               gameId: data.gameId,
               players: match.players,
               playerNames: match.playerNames,
@@ -1186,29 +1284,34 @@ async function start() {
         }
         break;
 
-      case 'match_complete':
+      case "match_complete":
         const completedMatch = matches.get(data.gameId);
         if (completedMatch) {
-          completedMatch.status = 'complete';
+          completedMatch.status = "complete";
           completedMatch.completedAt = Date.now();
 
           // STRICT: Clear active game so next match can start
           if (currentActiveGameId === data.gameId) {
             currentActiveGameId = null;
-            logger.info({ gameId: data.gameId }, 'Active game completed, ready for next match');
+            logger.info(
+              { gameId: data.gameId },
+              "Active game completed, ready for next match",
+            );
           }
 
           const winnerAddress = data.winner?.toLowerCase();
-          const winnerName = winnerAddress ? agentNameRegistry.get(winnerAddress) : undefined;
+          const winnerName = winnerAddress
+            ? agentNameRegistry.get(winnerAddress)
+            : undefined;
 
-          broadcast({ type: 'match_ended', ...data, winnerName });
+          broadcast({ type: "match_ended", ...data, winnerName });
 
           // Notify frontends watching this game
           broadcastToFrontends(data.gameId, {
-            type: 'game_ended',
+            type: "game_ended",
             gameId: data.gameId,
             winner: data.winner,
-            winnerName: winnerName || 'Unknown',
+            winnerName: winnerName || "Unknown",
             reason: data.reason,
             startedAt: completedMatch.startedAt,
             completedAt: completedMatch.completedAt,
@@ -1220,52 +1323,63 @@ async function start() {
         break;
 
       // Frontend subscribes to a specific game
-      case 'frontend_subscribe':
-        if (clientType === 'frontend' && clientId) {
+      case "frontend_subscribe":
+        if (clientType === "frontend" && clientId) {
           const frontend = connectedFrontends.get(clientId);
           if (frontend) {
             frontend.subscribedGames.add(data.gameId);
-            logger.info({ clientId, gameId: data.gameId }, 'Frontend subscribed to game');
+            logger.info({ clientId, gameId: data.gameId }, "Frontend subscribed to game");
 
             // Send current game state if available
             const gameMatch = matches.get(data.gameId);
             socket.send(
               JSON.stringify({
-                type: 'subscribed',
+                type: "subscribed",
                 gameId: data.gameId,
-                match: gameMatch ? {
-                  ...gameMatch,
-                  wagerAmount: gameMatch.wagerAmount.toString(),
-                } : null,
-              })
+                match: gameMatch
+                  ? {
+                      ...gameMatch,
+                      wagerAmount: gameMatch.wagerAmount.toString(),
+                    }
+                  : null,
+              }),
             );
           }
         }
         break;
 
       // Frontend unsubscribes from a game
-      case 'frontend_unsubscribe':
-        if (clientType === 'frontend' && clientId) {
+      case "frontend_unsubscribe":
+        if (clientType === "frontend" && clientId) {
           const frontend = connectedFrontends.get(clientId);
           if (frontend) {
             frontend.subscribedGames.delete(data.gameId);
-            logger.info({ clientId, gameId: data.gameId }, 'Frontend unsubscribed from game');
+            logger.info(
+              { clientId, gameId: data.gameId },
+              "Frontend unsubscribed from game",
+            );
           }
         }
         break;
 
       // Agent sends thought/reasoning to relay to frontends
-      case 'agent_thought':
+      case "agent_thought":
         const thoughtAgentAddress = data.agentAddress?.toLowerCase();
-        const thoughtAgentName = data.agentName || agentNameRegistry.get(thoughtAgentAddress) || 'Agent';
+        const thoughtAgentName =
+          data.agentName || agentNameRegistry.get(thoughtAgentAddress) || "Agent";
 
         logger.info(
-          { gameId: data.gameId, agent: thoughtAgentName, action: data.action, subscribedFrontends: connectedFrontends.size },
-          'Relaying agent thought to frontends'
+          {
+            gameId: data.gameId,
+            agent: thoughtAgentName,
+            action: data.action,
+            subscribedFrontends: connectedFrontends.size,
+          },
+          "Relaying agent thought to frontends",
         );
 
         broadcastToFrontends(data.gameId, {
-          type: 'agent_thought',
+          type: "agent_thought",
           gameId: data.gameId,
           agentAddress: data.agentAddress,
           agentName: thoughtAgentName,
@@ -1282,39 +1396,48 @@ async function start() {
 
         // Also broadcast to all frontends (for game list display)
         broadcastToAllFrontends({
-          type: 'agent_action',
+          type: "agent_action",
           gameId: data.gameId,
           agentName: thoughtAgentName,
           action: data.action,
         });
 
         // Spectator notification: All-in action
-        if (data.action === 'all_in' || data.action === 'allin') {
+        if (data.action === "all_in" || data.action === "allin") {
           broadcastToFrontends(data.gameId, {
-            type: 'spectator_notification',
-            notificationType: 'all_in',
+            type: "spectator_notification",
+            notificationType: "all_in",
             gameId: data.gameId,
             message: `${thoughtAgentName} goes ALL IN!`,
             agentName: thoughtAgentName,
             amount: data.amount,
             timestamp: Date.now(),
           });
-          logger.info({ gameId: data.gameId, agent: thoughtAgentName }, 'Spectator notification: ALL IN');
+          logger.info(
+            { gameId: data.gameId, agent: thoughtAgentName },
+            "Spectator notification: ALL IN",
+          );
         }
         break;
 
       // Agent's turn has started - relay to frontends for timer display
-      case 'turn_started':
-        const turnAgentName = data.agentName || agentNameRegistry.get(data.agentAddress?.toLowerCase()) || 'Agent';
+      case "turn_started":
+        const turnAgentName =
+          data.agentName ||
+          agentNameRegistry.get(data.agentAddress?.toLowerCase()) ||
+          "Agent";
 
-        logger.info({
-          gameId: data.gameId,
-          agent: turnAgentName,
-          turnDurationMs: data.turnDurationMs,
-        }, 'Relaying turn_started to frontends');
+        logger.info(
+          {
+            gameId: data.gameId,
+            agent: turnAgentName,
+            turnDurationMs: data.turnDurationMs,
+          },
+          "Relaying turn_started to frontends",
+        );
 
         broadcastToFrontends(data.gameId, {
-          type: 'turn_started',
+          type: "turn_started",
           gameId: data.gameId,
           agentAddress: data.agentAddress,
           agentName: turnAgentName,
@@ -1328,27 +1451,30 @@ async function start() {
           for (const [_apiKey, extAgent] of connectedExternalAgents) {
             if (extAgent.walletAddress.toLowerCase() === turnAddress) {
               sendToExternalAgent(extAgent.walletAddress, {
-                type: 'your_turn',
+                type: "your_turn",
                 gameId: data.gameId,
                 gameState: data.gameState || [],
-                pot: data.pot || '0',
-                phase: data.phase || 'preflop',
+                pot: data.pot || "0",
+                phase: data.phase || "preflop",
                 communityCards: data.communityCards || [],
                 holeCards: data.holeCards || [],
                 validActions: data.validActions || [
-                  { action: 'fold' },
-                  { action: 'check' },
-                  { action: 'call' },
-                  { action: 'raise' },
-                  { action: 'all_in' },
+                  { action: "fold" },
+                  { action: "check" },
+                  { action: "call" },
+                  { action: "raise" },
+                  { action: "all_in" },
                 ],
                 timeoutMs: data.turnDurationMs || 30000,
                 timestamp: Date.now(),
               });
-              logger.info({
-                gameId: data.gameId,
-                agent: extAgent.agentName,
-              }, 'Sent your_turn to external agent');
+              logger.info(
+                {
+                  gameId: data.gameId,
+                  agent: extAgent.agentName,
+                },
+                "Sent your_turn to external agent",
+              );
               break;
             }
           }
@@ -1356,17 +1482,23 @@ async function start() {
         break;
 
       // Agent sends initial hole cards for spectator display
-      case 'agent_cards':
-        const cardsAgentName = data.agentName || agentNameRegistry.get(data.agentAddress?.toLowerCase()) || 'Agent';
+      case "agent_cards":
+        const cardsAgentName =
+          data.agentName ||
+          agentNameRegistry.get(data.agentAddress?.toLowerCase()) ||
+          "Agent";
 
-        logger.info({
-          gameId: data.gameId,
-          agent: cardsAgentName,
-          cards: data.holeCards,
-        }, 'Relaying agent_cards to frontends');
+        logger.info(
+          {
+            gameId: data.gameId,
+            agent: cardsAgentName,
+            cards: data.holeCards,
+          },
+          "Relaying agent_cards to frontends",
+        );
 
         broadcastToFrontends(data.gameId, {
-          type: 'agent_cards',
+          type: "agent_cards",
           gameId: data.gameId,
           agentAddress: data.agentAddress,
           agentName: cardsAgentName,
@@ -1376,15 +1508,18 @@ async function start() {
         break;
 
       // Phase changed - relay to frontends for pause display
-      case 'phase_changed':
-        logger.info({
-          gameId: data.gameId,
-          phase: data.phase,
-          pauseDurationMs: data.pauseDurationMs,
-        }, 'Relaying phase_changed to frontends');
+      case "phase_changed":
+        logger.info(
+          {
+            gameId: data.gameId,
+            phase: data.phase,
+            pauseDurationMs: data.pauseDurationMs,
+          },
+          "Relaying phase_changed to frontends",
+        );
 
         broadcastToFrontends(data.gameId, {
-          type: 'phase_changed',
+          type: "phase_changed",
           gameId: data.gameId,
           phase: data.phase,
           pauseDurationMs: data.pauseDurationMs,
@@ -1398,14 +1533,14 @@ async function start() {
             for (const [_apiKey, extAgent] of connectedExternalAgents) {
               if (extAgent.walletAddress.toLowerCase() === playerAddr.toLowerCase()) {
                 sendToExternalAgent(extAgent.walletAddress, {
-                  type: 'game_state',
+                  type: "game_state",
                   gameId: data.gameId,
                   players: data.players || [],
-                  pot: data.pot || '0',
+                  pot: data.pot || "0",
                   phase: data.phase,
                   communityCards: data.communityCards || [],
-                  currentTurn: data.currentTurn || '',
-                  minBet: data.minBet || '0',
+                  currentTurn: data.currentTurn || "",
+                  minBet: data.minBet || "0",
                   timestamp: Date.now(),
                 });
               }
@@ -1414,50 +1549,62 @@ async function start() {
         }
 
         // Spectator notification: Showdown reached with multiple players
-        if (data.phase === 'showdown' && data.activePlayers && data.activePlayers > 1) {
+        if (data.phase === "showdown" && data.activePlayers && data.activePlayers > 1) {
           broadcastToFrontends(data.gameId, {
-            type: 'spectator_notification',
-            notificationType: 'showdown',
+            type: "spectator_notification",
+            notificationType: "showdown",
             gameId: data.gameId,
             message: `Showdown! ${data.activePlayers} players reveal their cards!`,
             activePlayers: data.activePlayers,
             timestamp: Date.now(),
           });
-          logger.info({ gameId: data.gameId, activePlayers: data.activePlayers }, 'Spectator notification: SHOWDOWN');
+          logger.info(
+            { gameId: data.gameId, activePlayers: data.activePlayers },
+            "Spectator notification: SHOWDOWN",
+          );
         }
         break;
 
       // Pot update - check for big pot notifications
-      case 'pot_update':
-        const BIG_POT_THRESHOLD = BigInt('50000000000000000'); // 0.05 MON
-        const potAmount = BigInt(data.pot || '0');
+      case "pot_update":
+        const BIG_POT_THRESHOLD = BigInt("50000000000000000"); // 0.05 MON
+        const potAmount = BigInt(data.pot || "0");
 
         if (potAmount >= BIG_POT_THRESHOLD) {
           const potMon = Number(potAmount) / 1e18;
           broadcastToFrontends(data.gameId, {
-            type: 'spectator_notification',
-            notificationType: 'big_pot',
+            type: "spectator_notification",
+            notificationType: "big_pot",
             gameId: data.gameId,
             message: `Big pot alert! ${potMon.toFixed(3)} MON at stake!`,
             pot: data.pot,
             timestamp: Date.now(),
           });
-          logger.info({ gameId: data.gameId, pot: data.pot }, 'Spectator notification: BIG POT');
+          logger.info(
+            { gameId: data.gameId, pot: data.pot },
+            "Spectator notification: BIG POT",
+          );
         }
         break;
 
       // Winner celebration - relay to frontends
-      case 'winner_celebration':
-        const winnerCelebName = data.winnerName || agentNameRegistry.get(data.winnerAddress?.toLowerCase()) || 'Winner';
+      case "winner_celebration":
+        const winnerCelebName =
+          data.winnerName ||
+          agentNameRegistry.get(data.winnerAddress?.toLowerCase()) ||
+          "Winner";
 
-        logger.info({
-          gameId: data.gameId,
-          winner: winnerCelebName,
-          pot: data.pot,
-        }, 'Relaying winner_celebration to frontends');
+        logger.info(
+          {
+            gameId: data.gameId,
+            winner: winnerCelebName,
+            pot: data.pot,
+          },
+          "Relaying winner_celebration to frontends",
+        );
 
         broadcastToFrontends(data.gameId, {
-          type: 'winner_celebration',
+          type: "winner_celebration",
           gameId: data.gameId,
           winnerAddress: data.winnerAddress,
           winnerName: winnerCelebName,
@@ -1468,13 +1615,13 @@ async function start() {
         break;
 
       default:
-        logger.warn({ type: data.type }, 'Unknown message type');
+        logger.warn({ type: data.type }, "Unknown message type");
     }
   }
 
   // Start server
-  const port = parseInt(process.env.PORT || '8080');
-  const host = process.env.HOST || '0.0.0.0';
+  const port = parseInt(process.env.PORT || "8080");
+  const host = process.env.HOST || "0.0.0.0";
 
   try {
     await fastify.listen({ port, host });

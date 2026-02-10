@@ -37,7 +37,7 @@ export function ArenaPage() {
       {/* Arena Header */}
       <ArenaHeader
         isConnected={liveGame.isConnected}
-        networkName={isCorrectNetwork ? 'Monad Testnet' : undefined}
+        networkName={isCorrectNetwork ? "Monad Testnet" : undefined}
       />
 
       {/* Main Content */}
@@ -46,9 +46,9 @@ export function ArenaPage() {
         <div className="w-72 flex-shrink-0 p-4 flex flex-col gap-4 overflow-y-auto border-r border-gray-800">
           <ArenaAgentQueue
             queuedAgents={liveGame.queuedAgents || []}
-            currentPlayers={liveGame.activePlayers?.map(id => ({
+            currentPlayers={liveGame.activePlayers?.map((id) => ({
               name: id,
-              address: ''
+              address: "",
             }))}
             isMatchmaking={liveGame.isMatchmaking || false}
           />
@@ -60,21 +60,21 @@ export function ArenaPage() {
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => handleModeChange('live')}
+                onClick={() => handleModeChange("live")}
                 className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  mode === 'live'
-                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                    : 'bg-gray-800/50 text-gray-400 border border-gray-700 hover:bg-gray-800'
+                  mode === "live"
+                    ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                    : "bg-gray-800/50 text-gray-400 border border-gray-700 hover:bg-gray-800"
                 }`}
               >
                 🔴 Live
               </button>
               <button
-                onClick={() => handleModeChange('demo')}
+                onClick={() => handleModeChange("demo")}
                 className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  mode === 'demo'
-                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                    : 'bg-gray-800/50 text-gray-400 border border-gray-700 hover:bg-gray-800'
+                  mode === "demo"
+                    ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                    : "bg-gray-800/50 text-gray-400 border border-gray-700 hover:bg-gray-800"
                 }`}
               >
                 🎮 Demo
@@ -84,8 +84,8 @@ export function ArenaPage() {
         </div>
 
         {/* Center - Poker Table */}
-        <div className="flex-1 flex items-center justify-center p-6 min-w-0">
-          {mode === 'live' && !canWatchLive ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 min-w-0 gap-6">
+          {mode === "live" && !canWatchLive ? (
             <div className="flex flex-col items-center justify-center gap-6 p-8 bg-gray-900/90 rounded-2xl border border-gray-700 max-w-md">
               <div className="w-20 h-20 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center">
                 <span className="text-4xl">🎰</span>
@@ -102,13 +102,50 @@ export function ArenaPage() {
               </p>
             </div>
           ) : (
-            <div className="w-full max-w-4xl">
-              <PokerTable
-                mode={mode}
-                activePlayers={mode === 'live' ? liveGame.activePlayers : undefined}
-                currentGameId={mode === 'live' ? liveGame.currentGameId : null}
-              />
-            </div>
+            <>
+              <div className="w-full max-w-4xl">
+                <PokerTable
+                  mode={mode}
+                  activePlayers={mode === "live" ? liveGame.activePlayers : undefined}
+                  currentGameId={mode === "live" ? liveGame.currentGameId : null}
+                />
+              </div>
+
+              {/* Start Next Hand Button - shown after game ends */}
+              {mode === "live" &&
+                liveGame.isConnected &&
+                !liveGame.isMatchmaking &&
+                liveGame.queuedAgents.length === 0 &&
+                !liveGame.currentGameId && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const response = await fetch(
+                          "http://localhost:8080/start-next-hand",
+                          {
+                            method: "POST",
+                            // headers: { "Content-Type": "application/json" },
+                            // body: JSON.stringify({}),
+                          },
+                        );
+                        const result = await response.json();
+                        console.log("Started next hand:", result);
+                      } catch (err) {
+                        console.error("Failed to start next hand:", err);
+                      }
+                    }}
+                    className="px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 
+                     hover:from-green-700 hover:to-emerald-700 
+                     text-white text-lg font-bold rounded-xl shadow-2xl 
+                     transition-all transform hover:scale-105 active:scale-95
+                     flex items-center gap-3 border-2 border-green-400/30
+                     animate-pulse hover:animate-none"
+                  >
+                    <span className="text-2xl">▶️</span>
+                    <span>Start Next Hand</span>
+                  </button>
+                )}
+            </>
           )}
         </div>
 
@@ -135,8 +172,8 @@ export function ArenaPage() {
                 Game: {liveGame.currentGameId.slice(0, 10)}...
               </span>
             )}
-            <span className={liveGame.isConnected ? 'text-green-400' : 'text-red-400'}>
-              {liveGame.isConnected ? '● Connected' : '○ Disconnected'}
+            <span className={liveGame.isConnected ? "text-green-400" : "text-red-400"}>
+              {liveGame.isConnected ? "● Connected" : "○ Disconnected"}
             </span>
           </div>
         </div>
