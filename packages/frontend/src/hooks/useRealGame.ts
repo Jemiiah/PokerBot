@@ -462,7 +462,10 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
           break;
 
         case "game_ended":
-          // Game ended, wait for next game
+          // Keep state visible briefly for celebration, then clear
+          setTimeout(() => {
+            useGameStore.getState().resetGame();
+          }, 5000);
           setCurrentGameId(null);
           setActivePlayers([]);
           setIsMatchmaking(false);

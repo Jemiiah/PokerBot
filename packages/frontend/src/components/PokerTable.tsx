@@ -43,13 +43,13 @@ export function PokerTable({ mode = 'demo', activePlayers, currentGameId }: Poke
   // Determine which players to show based on mode
   let playersToShow: AgentId[];
   if (mode === 'live') {
+  if (mode === "live") {
     if (hasActiveGame && activePlayers && activePlayers.length > 0) {
-      // Live mode with active game - show the game's players
       playersToShow = activePlayers;
     } else {
-      // Live mode waiting for game - show default live agents as placeholders
-      playersToShow = ['shadow', 'storm', 'sage', 'blaze'] as AgentId[];
+      playersToShow = [];
     }
+  }
   } else {
     // Demo mode uses fixed 4 demo agents
     playersToShow = ['deepseek', 'chatgpt', 'grok', 'claude'] as AgentId[];
