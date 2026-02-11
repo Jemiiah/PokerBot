@@ -146,12 +146,15 @@ function startMatchmaking() {
   logger.info('Manual matchmaking mode - periodic matching disabled');
 }
 
-function tryCreateMatch() {
+function tryCreateMatch(forceStart: boolean = false) {
   // Require at least one frontend/spectator connected before creating matches
   // This ensures spectators don't miss any game events
   if (connectedFrontends.size === 0) {
     if (matchmakingQueue.length >= MIN_PLAYERS_FOR_MATCH) {
-      logger.info({ queueSize: matchmakingQueue.length }, 'Waiting for frontend to connect before starting match');
+      logger.info(
+        { queueSize: matchmakingQueue.length },
+        "Waiting for frontend to connect before starting match",
+      );
     }
     return;
   }
@@ -159,14 +162,17 @@ function tryCreateMatch() {
   // STRICT: Only ONE game at a time - wait for current game to finish
   // Also block if game creation is in progress (waiting for on-chain confirmation)
   if (gameCreationPending) {
-    logger.debug('Game creation pending, waiting for confirmation');
+    logger.debug("Game creation pending, waiting for confirmation");
     return;
   }
 
   if (currentActiveGameId) {
     const activeMatch = matches.get(currentActiveGameId);
-    if (activeMatch && activeMatch.status !== 'complete') {
-      logger.debug({ currentGame: currentActiveGameId, status: activeMatch?.status }, 'Game in progress, waiting for completion');
+    if (activeMatch && activeMatch.status !== "complete") {
+      logger.debug(
+        { currentGame: currentActiveGameId, status: activeMatch?.status },
+        "Game in progress, waiting for completion",
+      );
       return;
     }
     // Clear the active game if it's complete
@@ -180,47 +186,58 @@ function tryCreateMatch() {
   }
 
   // Get agents that can afford the fixed entry fee (sorted by queue time)
-  const allEligibleAgents = matchmakingQueue
-    .filter(a => a.balance >= FIXED_ENTRY_FEE);
+  const allEligibleAgents = matchmakingQueue.filter((a) => a.balance >= FIXED_ENTRY_FEE);
 
   if (allEligibleAgents.length < MIN_PLAYERS_FOR_MATCH) {
-    logger.debug({
-      queueSize: matchmakingQueue.length,
-      eligible: allEligibleAgents.length,
-      requiredFee: FIXED_ENTRY_FEE.toString(),
-    }, 'Not enough eligible agents for match');
+    logger.debug(
+      {
+        queueSize: matchmakingQueue.length,
+        eligible: allEligibleAgents.length,
+        requiredFee: FIXED_ENTRY_FEE.toString(),
+      },
+      "Not enough eligible agents for match",
+    );
     matchmakingWaitStart = null;
     return;
   }
 
   // Smart batching: wait briefly for more players if we have 2-3
   const now = Date.now();
-  if (allEligibleAgents.length < MAX_PLAYERS_FOR_MATCH) {
+  if (allEligibleAgents.length < MAX_PLAYERS_FOR_MATCH && !forceStart) {
     if (matchmakingWaitStart === null) {
       matchmakingWaitStart = now;
-      logger.info({
-        eligible: allEligibleAgents.length,
-        maxPlayers: MAX_PLAYERS_FOR_MATCH,
-        waitMs: OPTIMAL_BATCH_WAIT_MS,
-      }, 'Waiting for more players to join');
+      logger.info(
+        {
+          eligible: allEligibleAgents.length,
+          maxPlayers: MAX_PLAYERS_FOR_MATCH,
+          waitMs: OPTIMAL_BATCH_WAIT_MS,
+        },
+        "Waiting for more players to join",
+      );
       return;
     }
 
     const waitedMs = now - matchmakingWaitStart;
     if (waitedMs < OPTIMAL_BATCH_WAIT_MS) {
-      logger.debug({
-        eligible: allEligibleAgents.length,
-        waitedMs,
-        remainingMs: OPTIMAL_BATCH_WAIT_MS - waitedMs,
-      }, 'Still waiting for more players');
+      logger.debug(
+        {
+          eligible: allEligibleAgents.length,
+          waitedMs,
+          remainingMs: OPTIMAL_BATCH_WAIT_MS - waitedMs,
+        },
+        "Still waiting for more players",
+      );
       return;
     }
 
     // Waited long enough, proceed with current players
-    logger.info({
-      eligible: allEligibleAgents.length,
-      waitedMs,
-    }, 'Wait time exceeded, starting match with current players');
+    logger.info(
+      {
+        eligible: allEligibleAgents.length,
+        waitedMs,
+      },
+      "Wait time exceeded, starting match with current players",
+    );
   }
 
   // Reset wait timer since we're starting a match
@@ -237,7 +254,7 @@ function tryCreateMatch() {
 
   // Remove matched agents from queue
   for (const agent of eligibleAgents) {
-    const idx = matchmakingQueue.findIndex(a => a.address === agent.address);
+    const idx = matchmakingQueue.findIndex((a) => a.address === agent.address);
     if (idx !== -1) {
       matchmakingQueue.splice(idx, 1);
     }
@@ -252,24 +269,27 @@ function tryCreateMatch() {
 
   // Sort by balance descending - richest agent creates the game (pays gas)
   const sortedAgents = [...eligibleAgents].sort((a, b) =>
-    a.balance > b.balance ? -1 : a.balance < b.balance ? 1 : 0
+    a.balance > b.balance ? -1 : a.balance < b.balance ? 1 : 0,
   );
   const creator = sortedAgents[0];
   const joiners = sortedAgents.slice(1);
 
-  logger.info({
-    creator: creator.name,
-    joiners: joiners.map(j => j.name),
-    wagerAmount: wagerAmount.toString(),
-    playerCount: eligibleAgents.length,
-  }, 'Creating match via coordinator');
+  logger.info(
+    {
+      creator: creator.name,
+      joiners: joiners.map((j) => j.name),
+      wagerAmount: wagerAmount.toString(),
+      playerCount: eligibleAgents.length,
+    },
+    "Creating match via coordinator",
+  );
 
   // Notify frontends about upcoming match
   broadcastToAllFrontends({
-    type: 'matchmaking_started',
+    type: "matchmaking_started",
     creator: creator.address,
     creatorName: creator.name,
-    players: eligibleAgents.map(a => ({ address: a.address, name: a.name })),
+    players: eligibleAgents.map((a) => ({ address: a.address, name: a.name })),
     wagerAmount: wagerAmount.toString(),
   });
 
@@ -278,25 +298,30 @@ function tryCreateMatch() {
     // Set pending flag BEFORE sending command to prevent race conditions
     gameCreationPending = true;
 
-    creator.socket.send(JSON.stringify({
-      type: 'create_game_command',
-      wagerAmount: wagerAmount.toString(),
-      minPlayers: MIN_PLAYERS_FOR_MATCH,
-      maxPlayers: eligibleAgents.length, // Match with exact number of queued players
-      expectedPlayers: joiners.map(j => ({ address: j.address, name: j.name })),
-    }));
-    logger.info({ agent: creator.name, wager: wagerAmount.toString() }, 'Sent create_game_command');
+    creator.socket.send(
+      JSON.stringify({
+        type: "create_game_command",
+        wagerAmount: wagerAmount.toString(),
+        minPlayers: MIN_PLAYERS_FOR_MATCH,
+        maxPlayers: eligibleAgents.length, // Match with exact number of queued players
+        expectedPlayers: joiners.map((j) => ({ address: j.address, name: j.name })),
+      }),
+    );
+    logger.info(
+      { agent: creator.name, wager: wagerAmount.toString() },
+      "Sent create_game_command",
+    );
 
     // Set timeout to clear pending flag if creation takes too long (30 seconds)
     setTimeout(() => {
       if (gameCreationPending && !currentActiveGameId) {
-        logger.warn('Game creation timed out, clearing pending flag');
+        logger.warn("Game creation timed out, clearing pending flag");
         gameCreationPending = false;
         readdAgentsToQueue(eligibleAgents);
       }
     }, 30000);
   } catch (error) {
-    logger.error({ error, agent: creator.name }, 'Failed to send create command');
+    logger.error({ error, agent: creator.name }, "Failed to send create command");
     gameCreationPending = false;
     // Return agents to queue
     readdAgentsToQueue(eligibleAgents);
@@ -610,7 +635,7 @@ async function start() {
     logger.info("Manual start-next-hand triggered");
 
     // Directly trigger match creation
-    tryCreateMatch();
+    tryCreateMatch(true);
 
     return {
       success: true,

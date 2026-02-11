@@ -404,7 +404,7 @@ class RealGameService {
     const store = useGameStore.getState();
 
     switch (message.type) {
-      case 'agent_thought':
+      case "agent_thought":
         // Register agent if we have name info
         if (message.agentAddress && message.agentName) {
           registerAgentAddress(message.agentAddress, message.agentName);
@@ -412,12 +412,12 @@ class RealGameService {
         this.handleThoughtUpdate(message);
         break;
 
-      case 'agent_connected':
+      case "agent_connected":
         // Register agent address to name mapping
         registerAgentAddress(message.address, message.name);
         break;
 
-      case 'subscribed':
+      case "subscribed":
         // Register players from match info
         if (message.match?.players && message.match?.playerNames) {
           for (let i = 0; i < message.match.players.length; i++) {
@@ -426,38 +426,38 @@ class RealGameService {
         }
         break;
 
-      case 'agent_disconnected':
+      case "agent_disconnected":
         // Only add events if we're in live mode
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           store.addEvent({
-            type: 'system',
+            type: "system",
             message: `${message.name} disconnected.`,
           });
         }
         break;
 
-      case 'agent_queued':
+      case "agent_queued":
         this.updateMatchmakingState({
           queueSize: message.queueSize,
           queuedAgents: message.queuedAgents,
         });
         // Only add events if we're in live mode
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           store.addEvent({
-            type: 'system',
+            type: "system",
             message: `${message.name} joined the queue (${message.queueSize} waiting)`,
           });
         }
         break;
 
-      case 'agent_dequeued':
+      case "agent_dequeued":
         this.updateMatchmakingState({
           queueSize: message.queueSize,
           queuedAgents: message.queuedAgents,
         });
         break;
 
-      case 'queue_state':
+      case "queue_state":
         // Initial queue state when frontend connects
         this.updateMatchmakingState({
           queueSize: message.queueSize,
@@ -465,61 +465,61 @@ class RealGameService {
         });
         break;
 
-      case 'matchmaking_started':
+      case "matchmaking_started":
         this.updateMatchmakingState({
           isMatchmaking: true,
           matchPlayers: message.players,
         });
         // Only add events if we're in live mode
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           store.addEvent({
-            type: 'system',
-            message: `Match starting! ${message.players.map(p => p.name).join(' vs ')}`,
+            type: "system",
+            message: `Match starting! ${message.players.map((p) => p.name).join(" vs ")}`,
           });
         }
         break;
 
-      case 'match_created':
+      case "match_created":
         registerAgentAddress(message.creator, message.creatorName);
         // Track the new game
         this.updateGame(message.gameId, {
-          status: 'waiting',
+          status: "waiting",
           creator: { address: message.creator, name: message.creatorName },
           players: [{ address: message.creator, name: message.creatorName }],
           wagerAmount: message.wagerAmount,
           createdAt: Date.now(),
         });
         // Only add events if we're in live mode
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           store.addEvent({
-            type: 'system',
+            type: "system",
             message: `${message.creatorName} created a game (${message.wagerAmount} wei)`,
           });
         }
         break;
 
-      case 'game_created':
-        registerAgentAddress(message.player, message.playerName || 'Unknown');
+      case "game_created":
+        registerAgentAddress(message.player, message.playerName || "Unknown");
         // Track the new game
         this.updateGame(message.gameId, {
-          status: 'waiting',
-          creator: { address: message.player, name: message.playerName || 'Unknown' },
-          players: [{ address: message.player, name: message.playerName || 'Unknown' }],
+          status: "waiting",
+          creator: { address: message.player, name: message.playerName || "Unknown" },
+          players: [{ address: message.player, name: message.playerName || "Unknown" }],
           wagerAmount: message.wagerAmount,
           createdAt: Date.now(),
         });
         // Only add events if we're in live mode
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           store.addEvent({
-            type: 'system',
-            message: `${message.playerName || 'Agent'} created a room with ${message.wagerAmount} wei wager`,
+            type: "system",
+            message: `${message.playerName || "Agent"} created a room with ${message.wagerAmount} wei wager`,
           });
         }
         // Reset matchmaking state since game is being created
         this.updateMatchmakingState({ isMatchmaking: false });
         break;
 
-      case 'player_joined':
+      case "player_joined":
         // Register the joining player
         registerAgentAddress(message.player, message.playerName);
 
@@ -527,7 +527,11 @@ class RealGameService {
         const existingGame = this.activeGames.get(message.gameId);
         if (existingGame) {
           const updatedPlayers = [...existingGame.players];
-          if (!updatedPlayers.find(p => p.address.toLowerCase() === message.player.toLowerCase())) {
+          if (
+            !updatedPlayers.find(
+              (p) => p.address.toLowerCase() === message.player.toLowerCase(),
+            )
+          ) {
             updatedPlayers.push({ address: message.player, name: message.playerName });
           }
           this.updateGame(message.gameId, {
@@ -536,17 +540,17 @@ class RealGameService {
         }
 
         // Only add events if we're in live mode
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           store.addEvent({
-            type: 'system',
+            type: "system",
             message: `${message.playerName} joined the game`,
           });
         }
         break;
 
-      case 'game_started':
+      case "game_started":
         // Register all players
-        if ('players' in message && 'playerNames' in message) {
+        if ("players" in message && "playerNames" in message) {
           for (let i = 0; i < message.players.length; i++) {
             registerAgentAddress(message.players[i], message.playerNames[i]);
           }
@@ -570,15 +574,15 @@ class RealGameService {
 
           // Update game status
           this.updateGame(message.gameId, {
-            status: 'active',
+            status: "active",
             players: uniquePlayers,
             startedAt: gameStartTime,
           });
 
           // Only add events if we're in live mode
-          if (store.mode === 'live') {
+          if (store.mode === "live") {
             // IMPORTANT: Reset game state for new game
-            store.setPhase('preflop');
+            store.setPhase("preflop");
             // Reset pot and community cards directly
             useGameStore.setState({ pot: 0, communityCards: [] });
 
@@ -595,29 +599,34 @@ class RealGameService {
             }
 
             // Set active players for this game
-            const activePlayerIds = uniquePlayers.map(p => getOrCreateAgentId(p.address));
+            const activePlayerIds = uniquePlayers.map((p) =>
+              getOrCreateAgentId(p.address),
+            );
             useGameStore.setState({ activePlayers: activePlayerIds });
 
             // Set game started timestamp
             store.setGameTimestamps(gameStartTime, undefined);
-            const playerNamesList = uniquePlayers.map(p => p.name).join(' vs ');
+            const playerNamesList = uniquePlayers.map((p) => p.name).join(" vs ");
             store.addEvent({
-              type: 'phase',
+              type: "phase",
               message: `Game Started: ${playerNamesList}`,
             });
             // Reset matchmaking state
-            this.updateMatchmakingState({ isMatchmaking: false, matchPlayers: undefined });
+            this.updateMatchmakingState({
+              isMatchmaking: false,
+              matchPlayers: undefined,
+            });
           }
         }
         break;
 
-      case 'game_ended':
-        const winnerNameStr = message.winnerName || message.winner.slice(0, 8) + '...';
+      case "game_ended":
+        const winnerNameStr = message.winnerName || message.winner.slice(0, 8) + "...";
         const endedGame = this.activeGames.get(message.gameId);
 
         // Update game status
         this.updateGame(message.gameId, {
-          status: 'complete',
+          status: "complete",
           winner: { address: message.winner, name: winnerNameStr },
         });
 
@@ -629,7 +638,7 @@ class RealGameService {
 
           // Use tracked game info if available, otherwise use defaults
           const playerIds = endedGame?.players?.length
-            ? endedGame.players.map(p => getOrCreateAgentId(p.address))
+            ? endedGame.players.map((p) => getOrCreateAgentId(p.address))
             : [winnerId]; // At minimum, include the winner
 
           // Ensure winner is in players list
@@ -637,13 +646,22 @@ class RealGameService {
             playerIds.push(winnerId);
           }
 
-          const startedAt = message.startedAt || endedGame?.startedAt || endedGame?.createdAt || (completedAt - 60000);
-          const durationSeconds = Math.max(1, Math.floor((completedAt - startedAt) / 1000));
+          const startedAt =
+            message.startedAt ||
+            endedGame?.startedAt ||
+            endedGame?.createdAt ||
+            completedAt - 60000;
+          const durationSeconds = Math.max(
+            1,
+            Math.floor((completedAt - startedAt) / 1000),
+          );
 
           // Calculate pot - use 0.02 MON (2 players * 0.01 MON entry fee) as default
-          const defaultPot = '20000000000000000'; // 0.02 MON in wei
+          const defaultPot = "20000000000000000"; // 0.02 MON in wei
           const potWei = endedGame?.wagerAmount
-            ? (BigInt(endedGame.wagerAmount) * BigInt(Math.max(2, playerIds.length))).toString()
+            ? (
+                BigInt(endedGame.wagerAmount) * BigInt(Math.max(2, playerIds.length))
+              ).toString()
             : defaultPot;
 
           useStatsStore.getState().recordGameResult({
@@ -653,23 +671,27 @@ class RealGameService {
             winnerId,
             pot: potWei,
             duration: durationSeconds,
-            phases: ['preflop', 'flop', 'turn', 'river', 'showdown'],
-            finalPhase: store.phase || 'showdown',
+            phases: ["preflop", "flop", "turn", "river", "showdown"],
+            finalPhase: store.phase || "showdown",
           });
 
-          console.log('[RealGameService] Recorded game result:', { gameId: message.gameId, winnerId, playerIds });
+          console.log("[RealGameService] Recorded game result:", {
+            gameId: message.gameId,
+            winnerId,
+            playerIds,
+          });
         } catch (err) {
-          console.error('[RealGameService] Failed to record game result:', err);
+          console.error("[RealGameService] Failed to record game result:", err);
         }
 
         // Set game completion timestamp
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           store.setGameTimestamps(message.startedAt, message.completedAt || Date.now());
           const durationStr = message.duration
             ? ` (${Math.floor(message.duration / 1000)}s)`
-            : '';
+            : "";
           store.addEvent({
-            type: 'system',
+            type: "system",
             message: `Game ended. Winner: ${winnerNameStr}${durationStr}`,
           });
         }
@@ -677,22 +699,33 @@ class RealGameService {
         this.updateMatchmakingState({ isMatchmaking: false, matchPlayers: undefined });
         // Clear turn timer
         store.clearTurnTimer();
+
+        // Clear table visuals after game ends
+        if (store.mode === "live") {
+          useGameStore.setState({
+            pot: 0,
+            communityCards: [],
+            phase: "waiting",
+            currentBet: 0,
+          });
+        }
+        
         // Remove completed game after a delay
         setTimeout(() => this.removeGame(message.gameId), 10000);
         break;
 
-      case 'turn_started':
+      case "turn_started":
         // Set turn timer for spectator display
-        if (store.mode === 'live' && message.agentAddress) {
+        if (store.mode === "live" && message.agentAddress) {
           const agentId = getOrCreateAgentId(message.agentAddress);
           store.setTurnTimer(agentId, message.timestamp, message.turnDurationMs);
           store.setActiveAgent(agentId);
         }
         break;
 
-      case 'phase_changed':
+      case "phase_changed":
         // Set phase pause for spectator display
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           const pauseUntil = Date.now() + message.pauseDurationMs;
           store.setPhasePause(pauseUntil);
           // Auto-clear pause after duration
@@ -702,12 +735,12 @@ class RealGameService {
         }
         break;
 
-      case 'winner_celebration':
+      case "winner_celebration":
         // Handle winner celebration
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           const celebWinnerId = getOrCreateAgentId(message.winnerAddress);
           store.addEvent({
-            type: 'winner',
+            type: "winner",
             agentId: celebWinnerId,
             agentName: message.winnerName,
             message: `${message.winnerName} wins the pot!`,
@@ -716,28 +749,37 @@ class RealGameService {
         }
         break;
 
-      case 'agent_cards':
+      case "agent_cards":
         // Handle initial hole cards for spectator display
-        if (store.mode === 'live' && message.holeCards) {
+        if (store.mode === "live" && message.holeCards) {
           const cardsAgentId = getOrCreateAgentId(message.agentAddress);
           const cards = parseHoleCardsString(message.holeCards);
           if (cards) {
             store.dealHoleCards(cardsAgentId, cards);
-            console.log('[RealGameService] Set hole cards for', message.agentName, ':', message.holeCards);
+            console.log(
+              "[RealGameService] Set hole cards for",
+              message.agentName,
+              ":",
+              message.holeCards,
+            );
           }
         }
         break;
 
-      case 'spectator_notification':
+      case "spectator_notification":
         // Handle spectator notifications (big_pot, all_in, showdown)
-        if (store.mode === 'live') {
+        if (store.mode === "live") {
           store.addEvent({
             type: message.notificationType,
             message: message.message,
             agentName: message.agentName,
             details: message.pot ? `Pot: ${message.pot}` : undefined,
           });
-          console.log('[RealGameService] Spectator notification:', message.notificationType, message.message);
+          console.log(
+            "[RealGameService] Spectator notification:",
+            message.notificationType,
+            message.message,
+          );
         }
         break;
     }
