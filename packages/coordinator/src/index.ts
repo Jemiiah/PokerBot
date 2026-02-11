@@ -61,10 +61,10 @@ const matchmakingQueue: QueuedAgent[] = [];
 const connectedExternalAgents = new Map<string, ConnectedExternalAgent>();
 
 // Matchmaking configuration
-const MATCHMAKING_INTERVAL = 3000; // Check queue every 3 seconds
+// const MATCHMAKING_INTERVAL = 3000; // Check queue every 3 seconds
 const MIN_PLAYERS_FOR_MATCH = 2; // Minimum players to start a match
 const MAX_PLAYERS_FOR_MATCH = 4; // Support up to 4 players per game
-const OPTIMAL_BATCH_WAIT_MS = 10000; // Wait up to 10s for more players to join
+// const OPTIMAL_BATCH_WAIT_MS = 10000; // Wait up to 10s for more players to join
 const FIXED_ENTRY_FEE = BigInt('10000000000000000'); // 0.01 MON - fixed entry fee for all games
 const STALE_GAME_TIMEOUT = 10 * 60 * 1000; // 10 minutes - games older than this are cleaned up
 const CLEANUP_INTERVAL = 60 * 1000; // Run cleanup every minute
@@ -72,7 +72,7 @@ const CLEANUP_INTERVAL = 60 * 1000; // Run cleanup every minute
 // STRICT: Only ONE game at a time
 let currentActiveGameId: string | null = null;
 let gameCreationPending = false; // Prevents multiple game creations during the creation window
-let matchmakingWaitStart: number | null = null; // Track when we started waiting for more players
+// let matchmakingWaitStart: number | null = null; // Track when we started waiting for more players
 
 // Generate unique ID for frontends
 let frontendIdCounter = 0;
@@ -133,185 +133,190 @@ function sendToExternalAgent(walletAddress: string, data: any) {
   return false;
 }
 
-// Matchmaking logic
+// // Matchmaking logic
+// function startMatchmaking() {
+//   setInterval(() => {
+//     tryCreateMatch();
+//   }, MATCHMAKING_INTERVAL);
+//   logger.info({ interval: MATCHMAKING_INTERVAL }, 'Matchmaking system started');
+// }
+
+// Matchmaking logic - DISABLED for manual control
 function startMatchmaking() {
-  setInterval(() => {
-    tryCreateMatch();
-  }, MATCHMAKING_INTERVAL);
-  logger.info({ interval: MATCHMAKING_INTERVAL }, 'Matchmaking system started');
+  logger.info('Manual matchmaking mode - periodic matching disabled');
 }
 
-function tryCreateMatch() {
-  // Require at least one frontend/spectator connected before creating matches
-  // This ensures spectators don't miss any game events
-  if (connectedFrontends.size === 0) {
-    if (matchmakingQueue.length >= MIN_PLAYERS_FOR_MATCH) {
-      logger.info({ queueSize: matchmakingQueue.length }, 'Waiting for frontend to connect before starting match');
-    }
-    return;
-  }
+// function tryCreateMatch() {
+//   // Require at least one frontend/spectator connected before creating matches
+//   // This ensures spectators don't miss any game events
+//   if (connectedFrontends.size === 0) {
+//     if (matchmakingQueue.length >= MIN_PLAYERS_FOR_MATCH) {
+//       logger.info({ queueSize: matchmakingQueue.length }, 'Waiting for frontend to connect before starting match');
+//     }
+//     return;
+//   }
 
-  // STRICT: Only ONE game at a time - wait for current game to finish
-  // Also block if game creation is in progress (waiting for on-chain confirmation)
-  if (gameCreationPending) {
-    logger.debug('Game creation pending, waiting for confirmation');
-    return;
-  }
+//   // STRICT: Only ONE game at a time - wait for current game to finish
+//   // Also block if game creation is in progress (waiting for on-chain confirmation)
+//   if (gameCreationPending) {
+//     logger.debug('Game creation pending, waiting for confirmation');
+//     return;
+//   }
 
-  if (currentActiveGameId) {
-    const activeMatch = matches.get(currentActiveGameId);
-    if (activeMatch && activeMatch.status !== 'complete') {
-      logger.debug({ currentGame: currentActiveGameId, status: activeMatch?.status }, 'Game in progress, waiting for completion');
-      return;
-    }
-    // Clear the active game if it's complete
-    currentActiveGameId = null;
-  }
+//   if (currentActiveGameId) {
+//     const activeMatch = matches.get(currentActiveGameId);
+//     if (activeMatch && activeMatch.status !== 'complete') {
+//       logger.debug({ currentGame: currentActiveGameId, status: activeMatch?.status }, 'Game in progress, waiting for completion');
+//       return;
+//     }
+//     // Clear the active game if it's complete
+//     currentActiveGameId = null;
+//   }
 
-  // Need at least MIN_PLAYERS_FOR_MATCH agents in queue
-  if (matchmakingQueue.length < MIN_PLAYERS_FOR_MATCH) {
-    matchmakingWaitStart = null; // Reset wait timer
-    return;
-  }
+//   // Need at least MIN_PLAYERS_FOR_MATCH agents in queue
+//   if (matchmakingQueue.length < MIN_PLAYERS_FOR_MATCH) {
+//     matchmakingWaitStart = null; // Reset wait timer
+//     return;
+//   }
 
-  // Get agents that can afford the fixed entry fee (sorted by queue time)
-  const allEligibleAgents = matchmakingQueue
-    .filter(a => a.balance >= FIXED_ENTRY_FEE);
+//   // Get agents that can afford the fixed entry fee (sorted by queue time)
+//   const allEligibleAgents = matchmakingQueue
+//     .filter(a => a.balance >= FIXED_ENTRY_FEE);
 
-  if (allEligibleAgents.length < MIN_PLAYERS_FOR_MATCH) {
-    logger.debug({
-      queueSize: matchmakingQueue.length,
-      eligible: allEligibleAgents.length,
-      requiredFee: FIXED_ENTRY_FEE.toString(),
-    }, 'Not enough eligible agents for match');
-    matchmakingWaitStart = null;
-    return;
-  }
+//   if (allEligibleAgents.length < MIN_PLAYERS_FOR_MATCH) {
+//     logger.debug({
+//       queueSize: matchmakingQueue.length,
+//       eligible: allEligibleAgents.length,
+//       requiredFee: FIXED_ENTRY_FEE.toString(),
+//     }, 'Not enough eligible agents for match');
+//     matchmakingWaitStart = null;
+//     return;
+//   }
 
-  // Smart batching: wait briefly for more players if we have 2-3
-  const now = Date.now();
-  if (allEligibleAgents.length < MAX_PLAYERS_FOR_MATCH) {
-    if (matchmakingWaitStart === null) {
-      matchmakingWaitStart = now;
-      logger.info({
-        eligible: allEligibleAgents.length,
-        maxPlayers: MAX_PLAYERS_FOR_MATCH,
-        waitMs: OPTIMAL_BATCH_WAIT_MS,
-      }, 'Waiting for more players to join');
-      return;
-    }
+//   // Smart batching: wait briefly for more players if we have 2-3
+//   const now = Date.now();
+//   if (allEligibleAgents.length < MAX_PLAYERS_FOR_MATCH) {
+//     if (matchmakingWaitStart === null) {
+//       matchmakingWaitStart = now;
+//       logger.info({
+//         eligible: allEligibleAgents.length,
+//         maxPlayers: MAX_PLAYERS_FOR_MATCH,
+//         waitMs: OPTIMAL_BATCH_WAIT_MS,
+//       }, 'Waiting for more players to join');
+//       return;
+//     }
 
-    const waitedMs = now - matchmakingWaitStart;
-    if (waitedMs < OPTIMAL_BATCH_WAIT_MS) {
-      logger.debug({
-        eligible: allEligibleAgents.length,
-        waitedMs,
-        remainingMs: OPTIMAL_BATCH_WAIT_MS - waitedMs,
-      }, 'Still waiting for more players');
-      return;
-    }
+//     const waitedMs = now - matchmakingWaitStart;
+//     if (waitedMs < OPTIMAL_BATCH_WAIT_MS) {
+//       logger.debug({
+//         eligible: allEligibleAgents.length,
+//         waitedMs,
+//         remainingMs: OPTIMAL_BATCH_WAIT_MS - waitedMs,
+//       }, 'Still waiting for more players');
+//       return;
+//     }
 
-    // Waited long enough, proceed with current players
-    logger.info({
-      eligible: allEligibleAgents.length,
-      waitedMs,
-    }, 'Wait time exceeded, starting match with current players');
-  }
+//     // Waited long enough, proceed with current players
+//     logger.info({
+//       eligible: allEligibleAgents.length,
+//       waitedMs,
+//     }, 'Wait time exceeded, starting match with current players');
+//   }
 
-  // Reset wait timer since we're starting a match
-  matchmakingWaitStart = null;
+//   // Reset wait timer since we're starting a match
+//   matchmakingWaitStart = null;
 
-  // Take up to MAX_PLAYERS_FOR_MATCH
-  const eligibleAgents = allEligibleAgents.slice(0, MAX_PLAYERS_FOR_MATCH);
+//   // Take up to MAX_PLAYERS_FOR_MATCH
+//   const eligibleAgents = allEligibleAgents.slice(0, MAX_PLAYERS_FOR_MATCH);
 
-  // Use fixed entry fee for all games
-  const wagerAmount = FIXED_ENTRY_FEE;
+//   // Use fixed entry fee for all games
+//   const wagerAmount = FIXED_ENTRY_FEE;
 
-  // Generate a temporary match ID for tracking (will be replaced with actual gameId)
-  const tempMatchId = `pending-${Date.now()}`;
+//   // Generate a temporary match ID for tracking (will be replaced with actual gameId)
+//   const tempMatchId = `pending-${Date.now()}`;
 
-  // Remove matched agents from queue
-  for (const agent of eligibleAgents) {
-    const idx = matchmakingQueue.findIndex(a => a.address === agent.address);
-    if (idx !== -1) {
-      matchmakingQueue.splice(idx, 1);
-    }
-    // Mark agent as in game IMMEDIATELY
-    const connectedAgent = connectedAgents.get(agent.address);
-    if (connectedAgent) {
-      connectedAgent.inGame = true;
-      connectedAgent.ready = false;
-      connectedAgent.currentGameId = tempMatchId; // Temporary ID until real game created
-    }
-  }
+//   // Remove matched agents from queue
+//   for (const agent of eligibleAgents) {
+//     const idx = matchmakingQueue.findIndex(a => a.address === agent.address);
+//     if (idx !== -1) {
+//       matchmakingQueue.splice(idx, 1);
+//     }
+//     // Mark agent as in game IMMEDIATELY
+//     const connectedAgent = connectedAgents.get(agent.address);
+//     if (connectedAgent) {
+//       connectedAgent.inGame = true;
+//       connectedAgent.ready = false;
+//       connectedAgent.currentGameId = tempMatchId; // Temporary ID until real game created
+//     }
+//   }
 
-  // Sort by balance descending - richest agent creates the game (pays gas)
-  const sortedAgents = [...eligibleAgents].sort((a, b) =>
-    a.balance > b.balance ? -1 : a.balance < b.balance ? 1 : 0
-  );
-  const creator = sortedAgents[0];
-  const joiners = sortedAgents.slice(1);
+//   // Sort by balance descending - richest agent creates the game (pays gas)
+//   const sortedAgents = [...eligibleAgents].sort((a, b) =>
+//     a.balance > b.balance ? -1 : a.balance < b.balance ? 1 : 0
+//   );
+//   const creator = sortedAgents[0];
+//   const joiners = sortedAgents.slice(1);
 
-  logger.info({
-    creator: creator.name,
-    joiners: joiners.map(j => j.name),
-    wagerAmount: wagerAmount.toString(),
-    playerCount: eligibleAgents.length,
-  }, 'Creating match via coordinator');
+//   logger.info({
+//     creator: creator.name,
+//     joiners: joiners.map(j => j.name),
+//     wagerAmount: wagerAmount.toString(),
+//     playerCount: eligibleAgents.length,
+//   }, 'Creating match via coordinator');
 
-  // Notify frontends about upcoming match
-  broadcastToAllFrontends({
-    type: 'matchmaking_started',
-    creator: creator.address,
-    creatorName: creator.name,
-    players: eligibleAgents.map(a => ({ address: a.address, name: a.name })),
-    wagerAmount: wagerAmount.toString(),
-  });
+//   // Notify frontends about upcoming match
+//   broadcastToAllFrontends({
+//     type: 'matchmaking_started',
+//     creator: creator.address,
+//     creatorName: creator.name,
+//     players: eligibleAgents.map(a => ({ address: a.address, name: a.name })),
+//     wagerAmount: wagerAmount.toString(),
+//   });
 
-  // Send create command to first agent
-  try {
-    // Set pending flag BEFORE sending command to prevent race conditions
-    gameCreationPending = true;
+//   // Send create command to first agent
+//   try {
+//     // Set pending flag BEFORE sending command to prevent race conditions
+//     gameCreationPending = true;
 
-    creator.socket.send(JSON.stringify({
-      type: 'create_game_command',
-      wagerAmount: wagerAmount.toString(),
-      minPlayers: MIN_PLAYERS_FOR_MATCH,
-      maxPlayers: eligibleAgents.length, // Match with exact number of queued players
-      expectedPlayers: joiners.map(j => ({ address: j.address, name: j.name })),
-    }));
-    logger.info({ agent: creator.name, wager: wagerAmount.toString() }, 'Sent create_game_command');
+//     creator.socket.send(JSON.stringify({
+//       type: 'create_game_command',
+//       wagerAmount: wagerAmount.toString(),
+//       minPlayers: MIN_PLAYERS_FOR_MATCH,
+//       maxPlayers: eligibleAgents.length, // Match with exact number of queued players
+//       expectedPlayers: joiners.map(j => ({ address: j.address, name: j.name })),
+//     }));
+//     logger.info({ agent: creator.name, wager: wagerAmount.toString() }, 'Sent create_game_command');
 
-    // Set timeout to clear pending flag if creation takes too long (30 seconds)
-    setTimeout(() => {
-      if (gameCreationPending && !currentActiveGameId) {
-        logger.warn('Game creation timed out, clearing pending flag');
-        gameCreationPending = false;
-        readdAgentsToQueue(eligibleAgents);
-      }
-    }, 30000);
-  } catch (error) {
-    logger.error({ error, agent: creator.name }, 'Failed to send create command');
-    gameCreationPending = false;
-    // Return agents to queue
-    readdAgentsToQueue(eligibleAgents);
-  }
-}
+//     // Set timeout to clear pending flag if creation takes too long (30 seconds)
+//     setTimeout(() => {
+//       if (gameCreationPending && !currentActiveGameId) {
+//         logger.warn('Game creation timed out, clearing pending flag');
+//         gameCreationPending = false;
+//         readdAgentsToQueue(eligibleAgents);
+//       }
+//     }, 30000);
+//   } catch (error) {
+//     logger.error({ error, agent: creator.name }, 'Failed to send create command');
+//     gameCreationPending = false;
+//     // Return agents to queue
+//     readdAgentsToQueue(eligibleAgents);
+//   }
+// }
 
-function readdAgentsToQueue(agents: QueuedAgent[]) {
-  for (const agent of agents) {
-    const connectedAgent = connectedAgents.get(agent.address);
-    if (connectedAgent) {
-      connectedAgent.inGame = false;
-      connectedAgent.ready = true;
-      connectedAgent.currentGameId = null;
-    }
-    // Re-add to queue if not already there
-    if (!matchmakingQueue.find(a => a.address === agent.address)) {
-      matchmakingQueue.push(agent);
-    }
-  }
-}
+// function readdAgentsToQueue(agents: QueuedAgent[]) {
+//   for (const agent of agents) {
+//     const connectedAgent = connectedAgents.get(agent.address);
+//     if (connectedAgent) {
+//       connectedAgent.inGame = false;
+//       connectedAgent.ready = true;
+//       connectedAgent.currentGameId = null;
+//     }
+//     // Re-add to queue if not already there
+//     if (!matchmakingQueue.find(a => a.address === agent.address)) {
+//       matchmakingQueue.push(agent);
+//     }
+//   }
+// }
 
 function addToMatchmakingQueue(agent: ConnectedAgent, balance: bigint, maxWager: bigint) {
   // Remove if already in queue
@@ -443,8 +448,8 @@ function addExternalAgentToQueue(walletAddress: string, agentName: string, maxWa
     isExternalAgent: true,
   });
 
-  // Try to create match immediately
-  tryCreateMatch();
+  // // Try to create match immediately
+  // tryCreateMatch();
 
   return true;
 }
@@ -833,14 +838,14 @@ async function start() {
                 message: "A spectator has connected. Matchmaking is now active.",
               });
 
-              // Immediately try to create a match now that a frontend is connected
-              if (matchmakingQueue.length >= MIN_PLAYERS_FOR_MATCH) {
-                logger.info(
-                  { queueSize: matchmakingQueue.length },
-                  "Frontend connected - triggering matchmaking",
-                );
-                tryCreateMatch();
-              }
+              // // Immediately try to create a match now that a frontend is connected
+              // if (matchmakingQueue.length >= MIN_PLAYERS_FOR_MATCH) {
+              //   logger.info(
+              //     { queueSize: matchmakingQueue.length },
+              //     "Frontend connected - triggering matchmaking",
+              //   );
+              //   tryCreateMatch();
+              // }
 
               return;
             }
@@ -1146,30 +1151,30 @@ async function start() {
             logger.info({ gameId: data.gameId }, "Match cleaned up from tracked games");
           }
 
-          // Always send game_ended to frontends (even if match wasn't tracked)
-          // This ensures UI cleanup for games created outside coordinator tracking
-          if (data.gameId) {
-            // Only send if not already sent for this game
-            const match = matches.get(data.gameId);
-            if (!match || match.status !== "complete") {
-              broadcastToAllFrontends({
-                type: "game_ended",
-                gameId: data.gameId,
-                winner: data.won ? data.address : "opponent",
-                winnerName: data.won ? finishedAgent?.name : "Opponent",
-              });
-              logger.info(
-                { gameId: data.gameId, agent: finishedAgent?.name },
-                "Sent game_ended to frontends",
-              );
+          // // Always send game_ended to frontends (even if match wasn't tracked)
+          // // This ensures UI cleanup for games created outside coordinator tracking
+          // if (data.gameId) {
+          //   // Only send if not already sent for this game
+          //   const match = matches.get(data.gameId);
+          //   if (!match || match.status !== "complete") {
+          //     broadcastToAllFrontends({
+          //       type: "game_ended",
+          //       gameId: data.gameId,
+          //       winner: data.won ? data.address : "opponent",
+          //       winnerName: data.won ? finishedAgent?.name : "Opponent",
+          //     });
+          //     logger.info(
+          //       { gameId: data.gameId, agent: finishedAgent?.name },
+          //       "Sent game_ended to frontends",
+          //     );
 
-              // Mark match as complete if it exists
-              if (match) {
-                match.status = "complete";
-                match.completedAt = Date.now();
-              }
-            }
-          }
+          //     // Mark match as complete if it exists
+          //     if (match) {
+          //       match.status = "complete";
+          //       match.completedAt = Date.now();
+          //     }
+          //   }
+          // }
 
           // STRICT: Clear active game
           if (currentActiveGameId === data.gameId) {
@@ -1177,48 +1182,60 @@ async function start() {
             logger.info({ gameId: data.gameId }, "Active game finished and cleared");
           }
 
-          // Auto-queue agent again if they want to continue playing
-          if (data.autoRequeue && data.balance && data.maxWager) {
+          // Re-add agents to queue after game (manual start required)
+          if (data.balance && data.maxWager) {
             setTimeout(() => {
-              // Small delay before requeuing
               const agent = connectedAgents.get(data.address);
               if (agent && !agent.inGame && !agent.currentGameId) {
-                // Re-add to queue
-                const existingIdx = matchmakingQueue.findIndex(
-                  (a) => a.address === agent.address,
-                );
-                if (existingIdx === -1) {
-                  matchmakingQueue.push({
-                    address: agent.address,
-                    name: agent.name,
-                    socket: agent.socket,
-                    balance: BigInt(data.balance),
-                    maxWager: BigInt(data.maxWager),
-                    queuedAt: Date.now(),
-                  });
-
-                  agent.ready = true;
-
-                  // Notify frontends that agent is back in queue
-                  broadcastToAllFrontends({
-                    type: "agent_queued",
-                    address: agent.address,
-                    name: agent.name,
-                    queueSize: matchmakingQueue.length,
-                    queuedAgents: matchmakingQueue.map((a) => ({
-                      address: a.address,
-                      name: a.name,
-                    })),
-                  });
-
-                  logger.info(
-                    { agent: agent.name, queueSize: matchmakingQueue.length },
-                    "Agent re-added to queue after game",
-                  );
-                }
+                // Use the proper function to re-add to queue
+                addToMatchmakingQueue(agent, BigInt(data.balance), BigInt(data.maxWager));
+                // Note: tryCreateMatch() is already commented out in addToMatchmakingQueue
               }
             }, 3000);
           }
+
+          // // Auto-queue agent again if they want to continue playing
+          // if (data.autoRequeue && data.balance && data.maxWager) {
+          //   setTimeout(() => {
+          //     // Small delay before requeuing
+          //     const agent = connectedAgents.get(data.address);
+          //     if (agent && !agent.inGame && !agent.currentGameId) {
+          //       // Re-add to queue
+          //       const existingIdx = matchmakingQueue.findIndex(
+          //         (a) => a.address === agent.address,
+          //       );
+          //       if (existingIdx === -1) {
+          //         matchmakingQueue.push({
+          //           address: agent.address,
+          //           name: agent.name,
+          //           socket: agent.socket,
+          //           balance: BigInt(data.balance),
+          //           maxWager: BigInt(data.maxWager),
+          //           queuedAt: Date.now(),
+          //         });
+
+          //         agent.ready = true;
+
+          //         // Notify frontends that agent is back in queue
+          //         broadcastToAllFrontends({
+          //           type: "agent_queued",
+          //           address: agent.address,
+          //           name: agent.name,
+          //           queueSize: matchmakingQueue.length,
+          //           queuedAgents: matchmakingQueue.map((a) => ({
+          //             address: a.address,
+          //             name: a.name,
+          //           })),
+          //         });
+
+          //         logger.info(
+          //           { agent: agent.name, queueSize: matchmakingQueue.length },
+          //           "Agent re-added to queue after game",
+          //         );
+          //       }
+          //     }
+          //   }, 3000);
+          // }
         }
         break;
 

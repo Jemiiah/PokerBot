@@ -459,6 +459,7 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
         case "game_ended":
           // Game ended, wait for next game
           setCurrentGameId(null);
+          setActivePlayers([]);
           setIsMatchmaking(false);
           break;
 

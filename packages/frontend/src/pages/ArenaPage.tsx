@@ -111,40 +111,54 @@ export function ArenaPage() {
                 />
               </div>
 
-              {/* Start Next Hand Button - shown after game ends */}
-              {mode === "live" &&
-                liveGame.isConnected &&
-                !liveGame.isMatchmaking &&
-                liveGame.queuedAgents.length === 0 &&
-                !liveGame.currentGameId && (
-                  <button
-                    onClick={async () => {
-                      try {
-                        const response = await fetch(
-                          "http://localhost:8080/start-next-hand",
-                          {
-                            method: "POST",
-                            // headers: { "Content-Type": "application/json" },
-                            // body: JSON.stringify({}),
-                          },
-                        );
-                        const result = await response.json();
-                        console.log("Started next hand:", result);
-                      } catch (err) {
-                        console.error("Failed to start next hand:", err);
-                      }
-                    }}
-                    className="px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 
-                     hover:from-green-700 hover:to-emerald-700 
-                     text-white text-lg font-bold rounded-xl shadow-2xl 
-                     transition-all transform hover:scale-105 active:scale-95
-                     flex items-center gap-3 border-2 border-green-400/30
-                     animate-pulse hover:animate-none"
-                  >
-                    <span className="text-2xl">▶️</span>
-                    <span>Start Next Hand</span>
-                  </button>
-                )}
+              {/* Start Next Hand Button - shown when agents ready and no active game */}
+              {mode === "live" && liveGame.isConnected && !liveGame.currentGameId && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const response = await fetch(
+                        "http://localhost:8080/start-next-hand",
+                        {
+                          method: "POST",
+                          body: JSON.stringify({}),
+                        },
+                      );
+                      const result = await response.json();
+                      console.log("Started next hand:", result);
+                    } catch (err) {
+                      console.error("Failed to start next hand:", err);
+                    }
+                  }}
+                  disabled={liveGame.queuedAgents.length < 2}
+                  className={`px-8 py-4 bg-gradient-to-r ${
+                    liveGame.queuedAgents.length >= 2
+                      ? "from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                      : "from-gray-600 to-gray-700 cursor-not-allowed opacity-50"
+                  } text-white text-lg font-bold rounded-xl shadow-2xl 
+    transition-all transform ${liveGame.queuedAgents.length >= 2 ? "hover:scale-105 active:scale-95" : ""}
+    flex items-center gap-3 border-2 ${
+      liveGame.queuedAgents.length >= 2
+        ? "border-green-400/30 animate-pulse hover:animate-none"
+        : "border-gray-500/30"
+    }`}
+                >
+                  <span className="text-2xl">▶️</span>
+                  <div className="flex flex-col items-start">
+                    <span>Start Hand</span>
+                    {liveGame.queuedAgents.length < 2 && (
+                      <span className="text-xs opacity-70">
+                        Need {2 - liveGame.queuedAgents.length} more agent
+                        {2 - liveGame.queuedAgents.length === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    {liveGame.queuedAgents.length >= 2 && (
+                      <span className="text-xs opacity-70">
+                        {liveGame.queuedAgents.length} agents ready
+                      </span>
+                    )}
+                  </div>
+                </button>
+              )}
             </>
           )}
         </div>
