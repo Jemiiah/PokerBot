@@ -645,6 +645,217 @@ async function start() {
     };
   });
 
+  // Start a match with specific agents selected by spectator
+  fastify.post<{ Body: { agents: string[] } }>(
+    "/start-selected-match",
+    async (request, reply) => {
+      const { agents } = request.body || {};
+
+      if (!agents || !Array.isArray(agents) || agents.length < 2) {
+        return reply.status(400).send({
+          success: false,
+          error: "Must provide an array of at least 2 agent names",
+        });
+      }
+
+      if (agents.length > 4) {
+        return reply.status(400).send({
+          success: false,
+          error: "Maximum 4 agents per match",
+        });
+      }
+
+      logger.info(
+        { agents, playerCount: agents.length },
+        "Selected match requested by spectator",
+      );
+
+      // Check if a game is already in progress
+      if (currentActiveGameId) {
+        const activeMatch = matches.get(currentActiveGameId);
+        if (activeMatch && activeMatch.status !== "complete") {
+          return reply.status(409).send({
+            success: false,
+            error: "A game is already in progress. Wait for it to finish.",
+          });
+        }
+        currentActiveGameId = null;
+      }
+
+      if (gameCreationPending) {
+        return reply.status(409).send({
+          success: false,
+          error: "A game is being created. Please wait.",
+        });
+      }
+
+      // Find the requested agents in connected agents (match by name, case-insensitive)
+      const selectedAgents: typeof matchmakingQueue = [];
+      const missingAgents: string[] = [];
+
+      for (const requestedName of agents) {
+        const normalizedName = requestedName.toLowerCase();
+        let found = false;
+
+        // First check the matchmaking queue
+        for (const queuedAgent of matchmakingQueue) {
+          if (queuedAgent.name.toLowerCase() === normalizedName) {
+            selectedAgents.push(queuedAgent);
+            found = true;
+            break;
+          }
+        }
+
+        // If not in queue, check connected agents and add them
+        if (!found) {
+          for (const [_, agent] of connectedAgents) {
+            if (agent.name.toLowerCase() === normalizedName) {
+              if (agent.inGame) {
+                return reply.status(409).send({
+                  success: false,
+                  error: `Agent ${agent.name} is already in a game`,
+                });
+              }
+              // Agent is connected but not in queue - we can still use them
+              selectedAgents.push({
+                address: agent.address,
+                name: agent.name,
+                socket: agent.socket,
+                balance: agent.balance || BigInt(0),
+                maxWager: FIXED_ENTRY_FEE,
+                queuedAt: Date.now(),
+              });
+              found = true;
+              break;
+            }
+          }
+        }
+
+        if (!found) {
+          missingAgents.push(requestedName);
+        }
+      }
+
+      if (missingAgents.length > 0) {
+        return reply.status(404).send({
+          success: false,
+          error: `Agents not found or not connected: ${missingAgents.join(", ")}`,
+        });
+      }
+
+      // Check balances
+      for (const agent of selectedAgents) {
+        if (agent.balance < FIXED_ENTRY_FEE) {
+          return reply.status(400).send({
+            success: false,
+            error: `Agent ${agent.name} doesn't have enough balance (needs ${FIXED_ENTRY_FEE.toString()} wei)`,
+          });
+        }
+      }
+
+      // Remove selected agents from the matchmaking queue
+      for (const agent of selectedAgents) {
+        removeFromMatchmakingQueue(agent.address);
+      }
+
+      const wagerAmount = FIXED_ENTRY_FEE;
+
+      // Sort by balance to pick creator (highest balance creates)
+      const sortedAgents = [...selectedAgents].sort((a, b) =>
+        a.balance > b.balance ? -1 : a.balance < b.balance ? 1 : 0,
+      );
+
+      const creator = sortedAgents[0];
+      const joiners = sortedAgents.slice(1);
+
+      logger.info(
+        {
+          creator: creator.name,
+          joiners: joiners.map((j) => j.name),
+          wagerAmount: wagerAmount.toString(),
+          playerCount: selectedAgents.length,
+        },
+        "Creating selected match",
+      );
+
+      // Notify frontends about upcoming match
+      broadcastToAllFrontends({
+        type: "matchmaking_started",
+        creator: creator.address,
+        creatorName: creator.name,
+        players: selectedAgents.map((a) => ({ address: a.address, name: a.name })),
+        wagerAmount: wagerAmount.toString(),
+      });
+
+      // Set pending flag and send create command
+      gameCreationPending = true;
+
+      try {
+        creator.socket.send(
+          JSON.stringify({
+            type: "create_game_command",
+            wagerAmount: wagerAmount.toString(),
+            minPlayers: 2,
+            maxPlayers: selectedAgents.length,
+            expectedPlayers: joiners.map((j) => ({ address: j.address, name: j.name })),
+          }),
+        );
+
+        // Mark agents as in-game
+        for (const agent of selectedAgents) {
+          const connAgent = connectedAgents.get(agent.address);
+          if (connAgent) {
+            connAgent.inGame = true;
+          }
+        }
+
+        // Timeout if creation takes too long
+        setTimeout(() => {
+          if (gameCreationPending && !currentActiveGameId) {
+            logger.warn("Selected match creation timed out, clearing pending flag");
+            gameCreationPending = false;
+            // Re-add agents to queue
+            for (const agent of selectedAgents) {
+              const connAgent = connectedAgents.get(agent.address);
+              if (connAgent) {
+                connAgent.inGame = false;
+                addToMatchmakingQueue(connAgent, agent.balance, agent.maxWager);
+              }
+            }
+          }
+        }, 30000);
+
+        return {
+          success: true,
+          message: `Match starting: ${selectedAgents.map((a) => a.name).join(" vs ")}`,
+          creator: creator.name,
+          joiners: joiners.map((j) => j.name),
+          playerCount: selectedAgents.length,
+        };
+      } catch (error) {
+        logger.error(
+          { error, creator: creator.name },
+          "Failed to send create command for selected match",
+        );
+        gameCreationPending = false;
+
+        // Re-add agents to queue on failure
+        for (const agent of selectedAgents) {
+          const connAgent = connectedAgents.get(agent.address);
+          if (connAgent) {
+            connAgent.inGame = false;
+            addToMatchmakingQueue(connAgent, agent.balance, agent.maxWager);
+          }
+        }
+
+        return reply.status(500).send({
+          success: false,
+          error: "Failed to create match",
+        });
+      }
+    },
+  );
+
   // Get arena configuration (entry fee, etc.)
   fastify.get("/config", async () => {
     return {

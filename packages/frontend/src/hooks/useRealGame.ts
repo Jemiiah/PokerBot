@@ -1,21 +1,21 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { useGameStore } from '../stores/gameStore';
-import { useGameState, useGameEvents } from './usePokerContract';
-import { realGameService } from '../services/realGameService';
-import { type AgentId } from '../lib/constants';
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useGameStore } from "../stores/gameStore";
+import { useGameState, useGameEvents } from "./usePokerContract";
+import { realGameService } from "../services/realGameService";
+import { type AgentId } from "../lib/constants";
 
 // Wallet address to Agent ID mapping
 // These should match the addresses in the agent .env files
 const WALLET_TO_AGENT: Record<string, AgentId> = {
   // Active agents with funds
-  '0xb213F4E9eb291fBbD0B0C2d9735b012E3569aE60': 'shadow',
-  '0xD91ac4F452A5e059dCCf03F35A0966D4dC81dCD4': 'storm',
-  '0x2388d2DDDF59aFFe840756dCd2515ef23f7D29E7': 'sage',
-  '0x98C0D1D88Da8C6f118afB276514995fECC0F9E1d': 'ember',
+  "0xb213F4E9eb291fBbD0B0C2d9735b012E3569aE60": "shadow",
+  "0xD91ac4F452A5e059dCCf03F35A0966D4dC81dCD4": "storm",
+  "0x2388d2DDDF59aFFe840756dCd2515ef23f7D29E7": "sage",
+  "0x98C0D1D88Da8C6f118afB276514995fECC0F9E1d": "ember",
   // Depleted agents (kept for reference)
-  '0x1dbe9020C99F62A1d9D0a6Fd60f5A6e396a97603': 'blaze',
-  '0xb0ac45e121ecc9cd261ddd4aa1ebf8881de2a479': 'viper',
-  '0xBDD02f353914aefD7b9094692B34bB2d45E1CD67': 'titan',
+  "0x1dbe9020C99F62A1d9D0a6Fd60f5A6e396a97603": "blaze",
+  "0xb0ac45e121ecc9cd261ddd4aa1ebf8881de2a479": "viper",
+  "0xBDD02f353914aefD7b9094692B34bB2d45E1CD67": "titan",
 };
 
 // Helper to get agent ID from wallet address (case-insensitive)
@@ -30,7 +30,7 @@ function getAgentFromWallet(wallet: string): AgentId | null {
 }
 
 // Type for the contract state returned by wagmi (readonly)
-type ContractStateData = ReturnType<typeof useGameState>['data'];
+type ContractStateData = ReturnType<typeof useGameState>["data"];
 
 export interface UseRealGameResult {
   isLoading: boolean;
@@ -115,7 +115,7 @@ export function useRealGame(gameId: string | null): UseRealGameResult {
         store.resetGame();
         store.startGame();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to watch game');
+        setError(err instanceof Error ? err.message : "Failed to watch game");
       }
     };
 
@@ -139,7 +139,7 @@ export function useRealGame(gameId: string | null): UseRealGameResult {
     (player: `0x${string}`, action: number, amount: bigint) => {
       realGameService.handleContractAction(player, action, amount);
     },
-    []
+    [],
   );
 
   const handlePhaseChange = useCallback((newPhase: number) => {
@@ -169,7 +169,7 @@ export function useRealGame(gameId: string | null): UseRealGameResult {
     if (!contractState || !contractState.players) return [];
 
     const players: AgentId[] = [];
-    const zeroAddress = '0x0000000000000000000000000000000000000000';
+    const zeroAddress = "0x0000000000000000000000000000000000000000";
 
     for (const player of contractState.players) {
       if (player.wallet && player.wallet !== zeroAddress) {
@@ -232,6 +232,7 @@ export interface UseLiveGameResult {
   phase: number | undefined;
   queuedAgents: QueuedAgent[];
   isMatchmaking: boolean;
+  connectedAgentNames: string[];
 }
 
 export function useLiveGame(active: boolean): UseLiveGameResult {
@@ -242,25 +243,29 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
   const [activePlayers, setActivePlayers] = useState<AgentId[]>([]);
   const [queuedAgents, setQueuedAgents] = useState<QueuedAgent[]>([]);
   const [isMatchmaking, setIsMatchmaking] = useState(false);
+  const [connectedAgentNames, setConnectedAgentNames] = useState<string[]>([]);
 
   const store = useGameStore();
   const playersRef = useRef<Map<string, AgentId>>(new Map());
 
   // Get game state from contract when we have a gameId
-  const {
-    data: contractState,
-    isLoading: isContractLoading,
-  } = useGameState(active && currentGameId ? currentGameId as `0x${string}` : undefined);
+  const { data: contractState, isLoading: isContractLoading } = useGameState(
+    active && currentGameId ? (currentGameId as `0x${string}`) : undefined,
+  );
 
   // Sync contract state to store when it changes
   useEffect(() => {
     if (!currentGameId || !contractState) return;
 
     // Sync to game store
-    realGameService.syncContractState(currentGameId, contractState as any, playersRef.current);
+    realGameService.syncContractState(
+      currentGameId,
+      contractState as any,
+      playersRef.current,
+    );
 
     // Update active players from contract state
-    const zeroAddress = '0x0000000000000000000000000000000000000000';
+    const zeroAddress = "0x0000000000000000000000000000000000000000";
     const players: AgentId[] = [];
     for (const player of contractState.players) {
       if (player.wallet && player.wallet !== zeroAddress) {
@@ -281,7 +286,7 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
     (player: `0x${string}`, action: number, amount: bigint) => {
       realGameService.handleContractAction(player, action, amount);
     },
-    []
+    [],
   );
 
   const handlePhaseChange = useCallback((newPhase: number) => {
@@ -294,7 +299,7 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
     setTimeout(() => setCurrentGameId(null), 5000);
   }, []);
 
-  useGameEvents(active && currentGameId ? currentGameId as `0x${string}` : undefined, {
+  useGameEvents(active && currentGameId ? (currentGameId as `0x${string}`) : undefined, {
     onAction: handleAction,
     onPhaseChange: handlePhaseChange,
     onGameEnd: handleGameEnd,
@@ -325,7 +330,7 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
           setIsLoading(false);
           // Start game - mode is already set by HomePage.handleModeChange
           // Only start if we're in live mode (mode should already be set)
-          if (store.mode === 'live') {
+          if (store.mode === "live") {
             store.startGame();
           }
         }
@@ -333,7 +338,7 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
         if (mounted) {
           setIsConnected(false);
           setIsLoading(false);
-          setError('Coordinator not available. Start the agents to play live.');
+          setError("Coordinator not available. Start the agents to play live.");
         }
       }
     };
@@ -463,6 +468,22 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
           setIsMatchmaking(false);
           break;
 
+        // --- Connected agent tracking ---
+        case "agent_connected":
+          if ("name" in message && message.name) {
+            setConnectedAgentNames((prev) =>
+              prev.includes(message.name) ? prev : [...prev, message.name],
+            );
+          }
+          break;
+
+        case "agent_disconnected":
+          if ("name" in message && message.name) {
+            setConnectedAgentNames((prev) => prev.filter((n) => n !== message.name));
+          }
+          break;
+
+        // --- Queue tracking (also updates connected agents) ---
         case "queue_state":
         case "agent_queued":
         case "agent_dequeued":
@@ -475,6 +496,14 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
                 balance: a.balance,
               })),
             );
+            // Agents in the queue are connected — merge into connected list
+            setConnectedAgentNames((prev) => {
+              const names = new Set(prev);
+              message.queuedAgents.forEach((a: any) => {
+                if (a.name) names.add(a.name);
+              });
+              return Array.from(names);
+            });
           }
           if ("queueSize" in message) {
             setIsMatchmaking((message.queueSize as number) >= 2);
@@ -528,5 +557,6 @@ export function useLiveGame(active: boolean): UseLiveGameResult {
     phase,
     queuedAgents,
     isMatchmaking,
+    connectedAgentNames,
   };
 }

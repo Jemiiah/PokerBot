@@ -1,36 +1,73 @@
-import { useState, useEffect } from 'react';
-import { useAccount } from 'wagmi';
-import { PokerTable } from '../components/PokerTable';
-import { ArenaHeader, ArenaLeaderboard, ArenaGameFeed, ArenaAgentQueue } from '../components/arena';
-import { useLiveGame } from '../hooks/useRealGame';
-import { stopGameLoop } from '../services/gameEngine';
-import { useGameStore } from '../stores/gameStore';
-import { WalletConnect } from '../components/WalletConnect';
-import { monadTestnet } from '../config/chains';
+import { useState, useEffect, useCallback } from "react";
+import { useAccount } from "wagmi";
+import { PokerTable } from "../components/PokerTable";
+import { ArenaHeader, ArenaLeaderboard, ArenaGameFeed } from "../components/arena";
+import { ArenaAgentSelect } from "../components/arena/ArenaAgentSelect";
+import { useLiveGame } from "../hooks/useRealGame";
+import { stopGameLoop } from "../services/gameEngine";
+import { useGameStore } from "../stores/gameStore";
+import { WalletConnect } from "../components/WalletConnect";
+import { monadTestnet } from "../config/chains";
+import type { LiveAgentId } from "../lib/constants";
 
-export type GameMode = 'demo' | 'live';
+export type GameMode = "demo" | "live";
+
+// Coordinator API URL (same origin as WebSocket but HTTP)
+const COORDINATOR_API_URL =
+  import.meta.env.VITE_COORDINATOR_API_URL || "http://localhost:8080";
 
 export function ArenaPage() {
-  const [mode, setMode] = useState<GameMode>('live');
+  const [mode, setMode] = useState<GameMode>("live");
+  const [isStartingMatch, setIsStartingMatch] = useState(false);
   const { isConnected: isWalletConnected, chain } = useAccount();
   const isCorrectNetwork = chain?.id === monadTestnet.id;
   const canWatchLive = isWalletConnected && isCorrectNetwork;
 
   // Sync store mode on initial mount
   useEffect(() => {
-    useGameStore.getState().setMode('live');
+    useGameStore.getState().setMode("live");
   }, []);
 
   // Connect to live game
-  const liveGame = useLiveGame(mode === 'live' && canWatchLive);
+  const liveGame = useLiveGame(mode === "live" && canWatchLive);
 
   const handleModeChange = (newMode: GameMode) => {
-    if (mode === 'demo' && newMode === 'live') {
+    if (mode === "demo" && newMode === "live") {
       stopGameLoop();
     }
     useGameStore.getState().setMode(newMode);
     setMode(newMode);
   };
+
+  // Start a match with specific agents selected by the spectator
+  const handleStartMatch = useCallback(async (agents: LiveAgentId[]) => {
+    if (agents.length < 2) return;
+
+    setIsStartingMatch(true);
+    try {
+      const response = await fetch(`${COORDINATOR_API_URL}/start-selected-match`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agents: agents.map((id) => id.charAt(0).toUpperCase() + id.slice(1)), // Capitalize: 'shadow' -> 'Shadow'
+        }),
+      });
+      const result = await response.json();
+
+      if (!result.success) {
+        console.error("Failed to start match:", result.error || result.message);
+      } else {
+        console.log("Match started:", result);
+      }
+    } catch (err) {
+      console.error("Failed to start match:", err);
+    } finally {
+      setIsStartingMatch(false);
+    }
+  }, []);
+
+  // Determine if a game is in progress
+  const gameInProgress = !!liveGame.currentGameId;
 
   return (
     <div className="h-screen flex flex-col bg-[#0a0e13] overflow-hidden">
@@ -42,15 +79,15 @@ export function ArenaPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex min-h-0">
-        {/* Left Panel - Queue & Info */}
+        {/* Left Panel - Agent Selection */}
         <div className="w-72 flex-shrink-0 p-4 flex flex-col gap-4 overflow-y-auto border-r border-gray-800">
-          <ArenaAgentQueue
-            queuedAgents={liveGame.queuedAgents || []}
-            currentPlayers={liveGame.activePlayers?.map((id) => ({
-              name: id,
-              address: "",
-            }))}
-            isMatchmaking={liveGame.isMatchmaking || false}
+          <ArenaAgentSelect
+            gameInProgress={gameInProgress}
+            currentPlayers={liveGame.activePlayers}
+            isConnected={liveGame.isConnected}
+            connectedAgents={liveGame.connectedAgentNames}
+            onStartMatch={handleStartMatch}
+            isStarting={isStartingMatch}
           />
 
           {/* Mode Toggle */}
@@ -102,64 +139,13 @@ export function ArenaPage() {
               </p>
             </div>
           ) : (
-            <>
-              <div className="w-full max-w-4xl">
-                <PokerTable
-                  mode={mode}
-                  activePlayers={mode === "live" ? liveGame.activePlayers : undefined}
-                  currentGameId={mode === "live" ? liveGame.currentGameId : null}
-                />
-              </div>
-
-              {/* Start Next Hand Button - shown when agents ready and no active game */}
-              {mode === "live" && liveGame.isConnected && !liveGame.currentGameId && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const response = await fetch(
-                        "http://localhost:8080/start-next-hand",
-                        {
-                          method: "POST",
-                          body: JSON.stringify({}),
-                        },
-                      );
-                      const result = await response.json();
-                      console.log("Started next hand:", result);
-                    } catch (err) {
-                      console.error("Failed to start next hand:", err);
-                    }
-                  }}
-                  disabled={liveGame.queuedAgents.length < 2}
-                  className={`px-8 py-4 bg-gradient-to-r ${
-                    liveGame.queuedAgents.length >= 2
-                      ? "from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
-                      : "from-gray-600 to-gray-700 cursor-not-allowed opacity-50"
-                  } text-white text-lg font-bold rounded-xl shadow-2xl 
-    transition-all transform ${liveGame.queuedAgents.length >= 2 ? "hover:scale-105 active:scale-95" : ""}
-    flex items-center gap-3 border-2 ${
-      liveGame.queuedAgents.length >= 2
-        ? "border-green-400/30 animate-pulse hover:animate-none"
-        : "border-gray-500/30"
-    }`}
-                >
-                  <span className="text-2xl">▶️</span>
-                  <div className="flex flex-col items-start">
-                    <span>Start Hand</span>
-                    {liveGame.queuedAgents.length < 2 && (
-                      <span className="text-xs opacity-70">
-                        Need {2 - liveGame.queuedAgents.length} more agent
-                        {2 - liveGame.queuedAgents.length === 1 ? "" : "s"}
-                      </span>
-                    )}
-                    {liveGame.queuedAgents.length >= 2 && (
-                      <span className="text-xs opacity-70">
-                        {liveGame.queuedAgents.length} agents ready
-                      </span>
-                    )}
-                  </div>
-                </button>
-              )}
-            </>
+            <div className="w-full max-w-4xl">
+              <PokerTable
+                mode={mode}
+                activePlayers={mode === "live" ? liveGame.activePlayers : undefined}
+                currentGameId={mode === "live" ? liveGame.currentGameId : null}
+              />
+            </div>
           )}
         </div>
 
