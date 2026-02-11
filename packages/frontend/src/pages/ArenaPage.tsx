@@ -3,43 +3,30 @@ import { useAccount } from "wagmi";
 import { PokerTable } from "../components/PokerTable";
 import { ArenaHeader, ArenaLeaderboard, ArenaGameFeed } from "../components/arena";
 import { ArenaAgentSelect } from "../components/arena/ArenaAgentSelect";
+import { HowToPlayModal } from "../components/arena/HowToPlayModal";
 import { useLiveGame } from "../hooks/useRealGame";
-import { stopGameLoop } from "../services/gameEngine";
 import { useGameStore } from "../stores/gameStore";
 import { WalletConnect } from "../components/WalletConnect";
 import { monadTestnet } from "../config/chains";
 import type { LiveAgentId } from "../lib/constants";
 
-export type GameMode = "demo" | "live";
-
-// Coordinator API URL (same origin as WebSocket but HTTP)
 const COORDINATOR_API_URL =
   import.meta.env.VITE_COORDINATOR_API_URL || "http://localhost:8080";
 
 export function ArenaPage() {
-  const [mode, setMode] = useState<GameMode>("live");
   const [isStartingMatch, setIsStartingMatch] = useState(false);
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
   const { isConnected: isWalletConnected, chain } = useAccount();
   const isCorrectNetwork = chain?.id === monadTestnet.id;
   const canWatchLive = isWalletConnected && isCorrectNetwork;
 
-  // Sync store mode on initial mount
+  // Always live mode
   useEffect(() => {
     useGameStore.getState().setMode("live");
   }, []);
 
-  // Connect to live game
-  const liveGame = useLiveGame(mode === "live" && canWatchLive);
+  const liveGame = useLiveGame(canWatchLive);
 
-  const handleModeChange = (newMode: GameMode) => {
-    if (mode === "demo" && newMode === "live") {
-      stopGameLoop();
-    }
-    useGameStore.getState().setMode(newMode);
-    setMode(newMode);
-  };
-
-  // Start a match with specific agents selected by the spectator
   const handleStartMatch = useCallback(async (agents: LiveAgentId[]) => {
     if (agents.length < 2) return;
 
@@ -49,7 +36,7 @@ export function ArenaPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          agents: agents.map((id) => id.charAt(0).toUpperCase() + id.slice(1)), // Capitalize: 'shadow' -> 'Shadow'
+          agents: agents.map((id) => id.charAt(0).toUpperCase() + id.slice(1)),
         }),
       });
       const result = await response.json();
@@ -66,20 +53,18 @@ export function ArenaPage() {
     }
   }, []);
 
-  // Determine if a game is in progress
   const gameInProgress = !!liveGame.currentGameId;
 
   return (
     <div className="h-screen flex flex-col bg-[#0a0e13] overflow-hidden">
-      {/* Arena Header */}
       <ArenaHeader
         isConnected={liveGame.isConnected}
         networkName={isCorrectNetwork ? "Monad Testnet" : undefined}
+        onHowToPlay={() => setShowHowToPlay(true)}
       />
 
-      {/* Main Content */}
       <div className="flex-1 flex min-h-0">
-        {/* Left Panel - Agent Selection */}
+        {/* Left Panel */}
         <div className="w-72 flex-shrink-0 p-4 flex flex-col gap-4 overflow-y-auto border-r border-gray-800">
           <ArenaAgentSelect
             gameInProgress={gameInProgress}
@@ -90,39 +75,45 @@ export function ArenaPage() {
             isStarting={isStartingMatch}
           />
 
-          {/* Mode Toggle */}
-          <div className="bg-gray-900/90 rounded-xl border border-gray-800 p-4">
-            <div className="text-xs text-gray-400 font-semibold uppercase tracking-wider mb-3">
-              Game Mode
+          {/* Wager Placeholder - Coming Soon */}
+          <div className="bg-gray-900/90 rounded-xl border border-gray-800 overflow-hidden opacity-60">
+            <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <span>💰</span> Custom Wager
+              </h2>
+              <span className="text-[10px] bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full font-semibold">
+                Coming Soon
+              </span>
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleModeChange("live")}
-                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  mode === "live"
-                    ? "bg-red-500/20 text-red-400 border border-red-500/30"
-                    : "bg-gray-800/50 text-gray-400 border border-gray-700 hover:bg-gray-800"
-                }`}
-              >
-                🔴 Live
-              </button>
-              <button
-                onClick={() => handleModeChange("demo")}
-                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  mode === "demo"
-                    ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                    : "bg-gray-800/50 text-gray-400 border border-gray-700 hover:bg-gray-800"
-                }`}
-              >
-                🎮 Demo
-              </button>
+            <div className="px-4 py-3 space-y-3">
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">Wager Amount</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value="0.01"
+                    disabled
+                    className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-400 cursor-not-allowed"
+                  />
+                  <span className="text-xs text-gray-500 font-medium">MON</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">Wager Type</label>
+                <select
+                  disabled
+                  className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-400 cursor-not-allowed appearance-none"
+                >
+                  <option>Fixed Entry</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Center - Poker Table */}
         <div className="flex-1 flex flex-col items-center justify-center p-6 min-w-0 gap-6">
-          {mode === "live" && !canWatchLive ? (
+          {!canWatchLive ? (
             <div className="flex flex-col items-center justify-center gap-6 p-8 bg-gray-900/90 rounded-2xl border border-gray-700 max-w-md">
               <div className="w-20 h-20 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center">
                 <span className="text-4xl">🎰</span>
@@ -141,15 +132,15 @@ export function ArenaPage() {
           ) : (
             <div className="w-full max-w-4xl">
               <PokerTable
-                mode={mode}
-                activePlayers={mode === "live" ? liveGame.activePlayers : undefined}
-                currentGameId={mode === "live" ? liveGame.currentGameId : null}
+                mode="live"
+                activePlayers={liveGame.activePlayers}
+                currentGameId={liveGame.currentGameId}
               />
             </div>
           )}
         </div>
 
-        {/* Right Panel - Leaderboard & Feed */}
+        {/* Right Panel */}
         <div className="w-80 flex-shrink-0 p-4 flex flex-col gap-4 overflow-hidden border-l border-gray-800">
           <ArenaLeaderboard />
           <div className="flex-1 min-h-0">
@@ -158,7 +149,7 @@ export function ArenaPage() {
         </div>
       </div>
 
-      {/* Footer Bar */}
+      {/* Footer */}
       <div className="flex-shrink-0 bg-gray-900/80 border-t border-gray-800 px-4 py-2">
         <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-gray-500">
           <div className="flex items-center gap-4">
@@ -178,6 +169,9 @@ export function ArenaPage() {
           </div>
         </div>
       </div>
+
+      {/* How to Play Modal */}
+      {showHowToPlay && <HowToPlayModal onClose={() => setShowHowToPlay(false)} />}
     </div>
   );
 }
