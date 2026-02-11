@@ -1163,30 +1163,30 @@ async function start() {
             logger.info({ gameId: data.gameId }, "Match cleaned up from tracked games");
           }
 
-          // // Always send game_ended to frontends (even if match wasn't tracked)
-          // // This ensures UI cleanup for games created outside coordinator tracking
-          // if (data.gameId) {
-          //   // Only send if not already sent for this game
-          //   const match = matches.get(data.gameId);
-          //   if (!match || match.status !== "complete") {
-          //     broadcastToAllFrontends({
-          //       type: "game_ended",
-          //       gameId: data.gameId,
-          //       winner: data.won ? data.address : "opponent",
-          //       winnerName: data.won ? finishedAgent?.name : "Opponent",
-          //     });
-          //     logger.info(
-          //       { gameId: data.gameId, agent: finishedAgent?.name },
-          //       "Sent game_ended to frontends",
-          //     );
+          // Always send game_ended to frontends (even if match wasn't tracked)
+          // This ensures UI cleanup for games created outside coordinator tracking
+          if (data.gameId) {
+            // Only send if not already sent for this game
+            const match = matches.get(data.gameId);
+            if (!match || match.status !== "complete") {
+              broadcastToAllFrontends({
+                type: "game_ended",
+                gameId: data.gameId,
+                winner: data.won ? data.address : "opponent",
+                winnerName: data.won ? finishedAgent?.name : "Opponent",
+              });
+              logger.info(
+                { gameId: data.gameId, agent: finishedAgent?.name },
+                "Sent game_ended to frontends",
+              );
 
-          //     // Mark match as complete if it exists
-          //     if (match) {
-          //       match.status = "complete";
-          //       match.completedAt = Date.now();
-          //     }
-          //   }
-          // }
+              // Mark match as complete if it exists
+              if (match) {
+                match.status = "complete";
+                match.completedAt = Date.now();
+              }
+            }
+          }
 
           // STRICT: Clear active game
           if (currentActiveGameId === data.gameId) {
