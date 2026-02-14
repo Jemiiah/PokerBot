@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-green.svg)](https://nodejs.org/)
-[![Monad](https://img.shields.io/badge/Chain-Monad%20Testnet-purple.svg)](https://monad.xyz/)
+[![Monad](https://img.shields.io/badge/Chain-Monad%20Mainnet-purple.svg)](https://monad.xyz/)
 [![Foundry](https://img.shields.io/badge/Built%20with-Foundry-orange.svg)](https://getfoundry.sh/)
 
 AI-powered poker agents built for the **Moltiverse Hackathon 2026** - Game Arena Agent Track.
@@ -34,19 +34,35 @@ AI-powered poker agents built for the **Moltiverse Hackathon 2026** - Game Arena
 
 > **See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed technical documentation**
 
-## Deployed Contracts (Monad Testnet)
+## Deployed Contracts
 
-| Contract | Address | Description |
-|----------|---------|-------------|
-| PokerGame | `0x2c19bEBa8A082b85D7c6D1564dD0Ebf9A149f2f0` | Heads-up game logic |
-| PokerGame4Max | `0x9d4191980352547DcF029Ee1f6C6806E17ae2811` | 2-4 player variant |
-| Escrow | `0x1174cFAe0E75F4c0FBd57F65b504c17C24B3fC8F` | Wager management |
-| Escrow4Max | `0x943473B2fF00482536BD6B64A650dF73A7dA3B04` | Multi-player escrow |
-| Tournament | `0x5658DC8fE47D27aBA44F9BAEa34D0Ab8b8566aaC` | ELO rankings |
-| CommitReveal | `0x50b49b4CfaBcb61781f8356de5f4F3f8D90Be11b` | Card randomness |
-| SpectatorBetting | `0xFf85d9b5e2361bA32866beF85F53065be8d2faba` | Spectator bets |
+### Monad Mainnet (Chain ID: 143)
 
-**Network:** Monad Testnet (Chain ID: `10143`) | **RPC:** `https://testnet-rpc.monad.xyz`
+| Contract | Address | Explorer |
+|----------|---------|----------|
+| PokerGame | `0xCb1ef57cC989ba3043edb52542E26590708254fe` | [View](https://monad.socialscan.io/address/0xCb1ef57cC989ba3043edb52542E26590708254fe) |
+| PokerGame4Max | `0xecaaEAA736a96B58d51793D288acE31499F7Fed2` | [View](https://monad.socialscan.io/address/0xecaaEAA736a96B58d51793D288acE31499F7Fed2) |
+| Escrow | `0xb9E66aA8Ed13bA563247F4b2375fD19CF4B2c32C` | [View](https://monad.socialscan.io/address/0xb9E66aA8Ed13bA563247F4b2375fD19CF4B2c32C) |
+| Escrow4Max | `0x0725199719bc9b20A82D2E9C1B17F008EBc70144` | [View](https://monad.socialscan.io/address/0x0725199719bc9b20A82D2E9C1B17F008EBc70144) |
+| Tournament | `0xFbBC8C646f2c7c145EEA2c30A82B2A17f64F7B92` | [View](https://monad.socialscan.io/address/0xFbBC8C646f2c7c145EEA2c30A82B2A17f64F7B92) |
+| CommitReveal | `0x3475cf785fDacc1B1d7f28BFc412e21B1cd5179d` | [View](https://monad.socialscan.io/address/0x3475cf785fDacc1B1d7f28BFc412e21B1cd5179d) |
+| SpectatorBetting | `0x30E0A00f4589d786b390a3bdB043C69093292F17` | [View](https://monad.socialscan.io/address/0x30E0A00f4589d786b390a3bdB043C69093292F17) |
+
+**RPC:** `https://rpc.monad.xyz` | **Explorers:** [Socialscan](https://monad.socialscan.io) · [MonadVision](https://monadvision.com) · [Monadscan](https://monadscan.com)
+
+### Monad Testnet (Chain ID: 10143)
+
+| Contract | Address |
+|----------|---------|
+| PokerGame | `0x2c19bEBa8A082b85D7c6D1564dD0Ebf9A149f2f0` |
+| PokerGame4Max | `0x9d4191980352547DcF029Ee1f6C6806E17ae2811` |
+| Escrow | `0x1174cFAe0E75F4c0FBd57F65b504c17C24B3fC8F` |
+| Escrow4Max | `0x943473B2fF00482536BD6B64A650dF73A7dA3B04` |
+| Tournament | `0x5658DC8fE47D27aBA44F9BAEa34D0Ab8b8566aaC` |
+| CommitReveal | `0x50b49b4CfaBcb61781f8356de5f4F3f8D90Be11b` |
+| SpectatorBetting | `0xFf85d9b5e2361bA32866beF85F53065be8d2faba` |
+
+**RPC:** `https://testnet-rpc.monad.xyz`
 
 ## Project Structure
 

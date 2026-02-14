@@ -138,16 +138,58 @@ export const POKER_GAME_ABI = [
   },
 ] as const;
 
-// Contract addresses - Monad Testnet (deployed 2026-02-04)
-export const POKER_GAME_ADDRESS = '0x2c19bEBa8A082b85D7c6D1564dD0Ebf9A149f2f0' as `0x${string}`;
-export const ESCROW_ADDRESS = '0x1174cFAe0E75F4c0FBd57F65b504c17C24B3fC8F' as `0x${string}`;
-export const TOURNAMENT_ADDRESS = '0x5658DC8fE47D27aBA44F9BAEa34D0Ab8b8566aaC' as `0x${string}`;
-export const COMMIT_REVEAL_ADDRESS = '0x50b49b4CfaBcb61781f8356de5f4F3f8D90Be11b' as `0x${string}`;
-export const SPECTATOR_BETTING_ADDRESS = '0xFf85d9b5e2361bA32866beF85F53065be8d2faba' as `0x${string}`;
+// =============================================================================
+// CONTRACT ADDRESSES BY NETWORK
+// =============================================================================
 
-// 4-Player Poker Contract addresses - Monad Testnet (deployed 2026-02-05)
-export const POKER_GAME_4MAX_ADDRESS = '0x9d4191980352547DcF029Ee1f6C6806E17ae2811' as `0x${string}`;
-export const ESCROW_4MAX_ADDRESS = '0x943473B2fF00482536BD6B64A650dF73A7dA3B04' as `0x${string}`;
+// Monad Mainnet Contract Addresses (Chain ID: 143)
+// Deployed: 2026-02-14
+export const MAINNET_CONTRACTS = {
+  POKER_GAME: '0xCb1ef57cC989ba3043edb52542E26590708254fe' as `0x${string}`,
+  ESCROW: '0xb9E66aA8Ed13bA563247F4b2375fD19CF4B2c32C' as `0x${string}`,
+  TOURNAMENT: '0xFbBC8C646f2c7c145EEA2c30A82B2A17f64F7B92' as `0x${string}`,
+  COMMIT_REVEAL: '0x3475cf785fDacc1B1d7f28BFc412e21B1cd5179d' as `0x${string}`,
+  SPECTATOR_BETTING: '0x30E0A00f4589d786b390a3bdB043C69093292F17' as `0x${string}`,
+  POKER_GAME_4MAX: '0xecaaEAA736a96B58d51793D288acE31499F7Fed2' as `0x${string}`,
+  ESCROW_4MAX: '0x0725199719bc9b20A82D2E9C1B17F008EBc70144' as `0x${string}`,
+} as const;
+
+// Monad Testnet Contract Addresses (Chain ID: 10143)
+export const TESTNET_CONTRACTS = {
+  POKER_GAME: '0x2c19bEBa8A082b85D7c6D1564dD0Ebf9A149f2f0' as `0x${string}`,
+  ESCROW: '0x1174cFAe0E75F4c0FBd57F65b504c17C24B3fC8F' as `0x${string}`,
+  TOURNAMENT: '0x5658DC8fE47D27aBA44F9BAEa34D0Ab8b8566aaC' as `0x${string}`,
+  COMMIT_REVEAL: '0x50b49b4CfaBcb61781f8356de5f4F3f8D90Be11b' as `0x${string}`,
+  SPECTATOR_BETTING: '0xFf85d9b5e2361bA32866beF85F53065be8d2faba' as `0x${string}`,
+  POKER_GAME_4MAX: '0x9d4191980352547DcF029Ee1f6C6806E17ae2811' as `0x${string}`,
+  ESCROW_4MAX: '0x943473B2fF00482536BD6B64A650dF73A7dA3B04' as `0x${string}`,
+} as const;
+
+// Get contracts for a specific chain
+export function getContractsForChain(chainId: number) {
+  switch (chainId) {
+    case 143:
+      return MAINNET_CONTRACTS;
+    case 10143:
+      return TESTNET_CONTRACTS;
+    default:
+      console.warn(`Unknown chain ID: ${chainId}, defaulting to testnet`);
+      return TESTNET_CONTRACTS;
+  }
+}
+
+// Active chain from environment
+const activeChainId = parseInt(import.meta.env.VITE_CHAIN_ID || '10143');
+const ACTIVE_CONTRACTS = getContractsForChain(activeChainId);
+
+// Export individual addresses for backward compatibility
+export const POKER_GAME_ADDRESS = ACTIVE_CONTRACTS.POKER_GAME;
+export const ESCROW_ADDRESS = ACTIVE_CONTRACTS.ESCROW;
+export const TOURNAMENT_ADDRESS = ACTIVE_CONTRACTS.TOURNAMENT;
+export const COMMIT_REVEAL_ADDRESS = ACTIVE_CONTRACTS.COMMIT_REVEAL;
+export const SPECTATOR_BETTING_ADDRESS = ACTIVE_CONTRACTS.SPECTATOR_BETTING;
+export const POKER_GAME_4MAX_ADDRESS = ACTIVE_CONTRACTS.POKER_GAME_4MAX;
+export const ESCROW_4MAX_ADDRESS = ACTIVE_CONTRACTS.ESCROW_4MAX;
 
 // SpectatorBetting ABI
 export const SPECTATOR_BETTING_ABI = [

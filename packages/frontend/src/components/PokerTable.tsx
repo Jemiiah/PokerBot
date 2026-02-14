@@ -43,13 +43,11 @@ export function PokerTable({ mode = 'demo', activePlayers, currentGameId }: Poke
   // Determine which players to show based on mode
   let playersToShow: AgentId[];
   if (mode === 'live') {
-  if (mode === "live") {
     if (hasActiveGame && activePlayers && activePlayers.length > 0) {
       playersToShow = activePlayers;
     } else {
       playersToShow = [];
     }
-  }
   } else {
     // Demo mode uses fixed 4 demo agents
     playersToShow = ['deepseek', 'chatgpt', 'grok', 'claude'] as AgentId[];

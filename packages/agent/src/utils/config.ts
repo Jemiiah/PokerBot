@@ -6,10 +6,34 @@ import { resolve } from 'path';
 const envPath = process.env.DOTENV_CONFIG_PATH || resolve(process.cwd(), '../../.env');
 dotenvConfig({ path: envPath });
 
+// =============================================================================
+// NETWORK CONFIGURATION
+// =============================================================================
+
+export const NETWORKS = {
+  mainnet: {
+    chainId: 143,
+    rpcUrl: 'https://rpc.monad.xyz',
+    name: 'Monad Mainnet',
+  },
+  testnet: {
+    chainId: 10143,
+    rpcUrl: 'https://testnet-rpc.monad.xyz',
+    name: 'Monad Testnet',
+  },
+} as const;
+
+export type NetworkType = 'mainnet' | 'testnet';
+
+export function getNetworkByChainId(chainId: number): NetworkType {
+  return chainId === 143 ? 'mainnet' : 'testnet';
+}
+
 export interface AgentConfig {
   // Network
   rpcUrl: string;
   chainId: number;
+  networkType: NetworkType;
 
   // Wallet
   privateKey: `0x${string}`;
@@ -51,10 +75,15 @@ function getEnvOrDefault(key: string, defaultValue: string): string {
 }
 
 export function loadConfig(): AgentConfig {
+  const chainId = parseInt(getEnvOrDefault('MONAD_CHAIN_ID', '10143'));
+  const networkType = getNetworkByChainId(chainId);
+  const network = NETWORKS[networkType];
+
   return {
     // Network
-    rpcUrl: getEnvOrDefault('MONAD_RPC_URL', 'https://testnet-rpc.monad.xyz'),
-    chainId: parseInt(getEnvOrDefault('MONAD_CHAIN_ID', '10143')),
+    rpcUrl: getEnvOrDefault('MONAD_RPC_URL', network.rpcUrl),
+    chainId: chainId,
+    networkType: networkType,
 
     // Wallet
     privateKey: getEnvOrThrow('AGENT_PRIVATE_KEY') as `0x${string}`,

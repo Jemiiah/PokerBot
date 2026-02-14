@@ -1,6 +1,6 @@
 import { createConfig, http } from 'wagmi';
 import { injected } from 'wagmi/connectors';
-import { monadTestnet } from './chains';
+import { monadMainnet, monadTestnet, activeChain } from './chains';
 
 // Type for window with OKX wallet
 declare global {
@@ -38,7 +38,7 @@ function getOKXProvider() {
 }
 
 export const wagmiConfig = createConfig({
-  chains: [monadTestnet],
+  chains: [activeChain, monadMainnet, monadTestnet],
   connectors: [
     // Use injected connector - will auto-detect available wallet
     injected({
@@ -50,6 +50,7 @@ export const wagmiConfig = createConfig({
     }),
   ],
   transports: {
+    [monadMainnet.id]: http(),
     [monadTestnet.id]: http(),
   },
 });
