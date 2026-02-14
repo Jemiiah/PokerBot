@@ -7,13 +7,13 @@ import { type AgentId } from "../lib/constants";
 // Wallet address to Agent ID mapping
 // These should match the addresses in the agent .env files
 const WALLET_TO_AGENT: Record<string, AgentId> = {
-  // Active agents with funds
+  // All 8 agents
+  "0x1dbe9020C99F62A1d9D0a6Fd60f5A6e396a97603": "blaze",
+  "0x717c5A190AEC2c9beb855Cba7a15d266e3b1Ab25": "frost",
   "0xb213F4E9eb291fBbD0B0C2d9735b012E3569aE60": "shadow",
   "0xD91ac4F452A5e059dCCf03F35A0966D4dC81dCD4": "storm",
   "0x2388d2DDDF59aFFe840756dCd2515ef23f7D29E7": "sage",
   "0x98C0D1D88Da8C6f118afB276514995fECC0F9E1d": "ember",
-  // Depleted agents (kept for reference)
-  "0x1dbe9020C99F62A1d9D0a6Fd60f5A6e396a97603": "blaze",
   "0xb0ac45e121ecc9cd261ddd4aa1ebf8881de2a479": "viper",
   "0xBDD02f353914aefD7b9094692B34bB2d45E1CD67": "titan",
 };

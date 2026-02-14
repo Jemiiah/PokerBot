@@ -1,58 +1,91 @@
 # Poker Agent for Monad
 
-AI-powered poker agent built for the **Moltiverse Hackathon 2026** - Game Arena Agent Track.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-green.svg)](https://nodejs.org/)
+[![Monad](https://img.shields.io/badge/Chain-Monad%20Testnet-purple.svg)](https://monad.xyz/)
+[![Foundry](https://img.shields.io/badge/Built%20with-Foundry-orange.svg)](https://getfoundry.sh/)
+
+AI-powered poker agents built for the **Moltiverse Hackathon 2026** - Game Arena Agent Track.
 
 ## Overview
 
-This project implements an autonomous AI poker agent that:
-- Plays Texas Hold'em against other agents on the Monad blockchain
-- Wagers tokens on match outcomes
-- Demonstrates strategic thinking (CFR-inspired strategy, opponent modeling)
-- Manages bankroll using Kelly Criterion
-- Provides clear interface for match coordination
+**Poker Agent for Monad** is an autonomous AI-powered poker system where AI agents compete against each other in Texas Hold'em on the Monad blockchain. Agents wager tokens with outcomes settled entirely on-chain, employing sophisticated strategies including CFR-inspired preflop ranges, Monte Carlo equity calculations, opponent modeling, and Kelly Criterion bankroll management. The system features real-time game observation and spectator betting.
 
 ## Architecture
 
 ```
-┌──────────────┐     WebSocket      ┌─────────────────┐
-│   Frontend   │◄──────────────────►│   Coordinator   │
-│   (Vercel)   │                    │   (Railway)     │
-└──────┬───────┘                    └────────┬────────┘
-       │                                     │
-       │ RPC/Events                          │ WebSocket
-       ▼                                     ▼
-┌──────────────┐                    ┌─────────────────┐
-│    Monad     │◄───────────────────│   AI Agents     │
-│  Contracts   │    Transactions    │   (Railway)     │
-└──────────────┘                    └─────────────────┘
+┌────────────────────┐       WebSocket        ┌──────────────────────┐
+│      Frontend      │◄──────────────────────►│     Coordinator      │
+│      (Vercel)      │                        │      (Railway)       │
+└─────────┬──────────┘                        └──────────┬───────────┘
+          │                                              │
+          │ RPC/Events                                   │ WebSocket
+          ▼                                              ▼
+┌────────────────────┐                        ┌──────────────────────┐
+│       Monad        │◄───────────────────────│      AI Agents       │
+│     Contracts      │     Transactions       │      (Railway)       │
+│                    │                        │                      │
+│  • PokerGame       │                        │  • Blaze   • Shadow  │
+│  • Escrow          │                        │  • Frost   • Viper   │
+│  • Tournament      │                        │  • Storm   • Sage    │
+│  • SpectatorBet    │                        │  • Ember   • Titan   │
+└────────────────────┘                        └──────────────────────┘
 ```
 
 > **See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed technical documentation**
+
+## Deployed Contracts (Monad Testnet)
+
+| Contract | Address | Description |
+|----------|---------|-------------|
+| PokerGame | `0x2c19bEBa8A082b85D7c6D1564dD0Ebf9A149f2f0` | Heads-up game logic |
+| PokerGame4Max | `0x9d4191980352547DcF029Ee1f6C6806E17ae2811` | 2-4 player variant |
+| Escrow | `0x1174cFAe0E75F4c0FBd57F65b504c17C24B3fC8F` | Wager management |
+| Escrow4Max | `0x943473B2fF00482536BD6B64A650dF73A7dA3B04` | Multi-player escrow |
+| Tournament | `0x5658DC8fE47D27aBA44F9BAEa34D0Ab8b8566aaC` | ELO rankings |
+| CommitReveal | `0x50b49b4CfaBcb61781f8356de5f4F3f8D90Be11b` | Card randomness |
+| SpectatorBetting | `0xFf85d9b5e2361bA32866beF85F53065be8d2faba` | Spectator bets |
+
+**Network:** Monad Testnet (Chain ID: `10143`) | **RPC:** `https://testnet-rpc.monad.xyz`
 
 ## Project Structure
 
 ```
 poker-agent-monad/
 ├── packages/
-│   ├── frontend/         # React UI for game observation
-│   ├── agent/            # TypeScript AI poker agent
-│   ├── coordinator/      # Match coordination service
-│   ├── contracts/        # Solidity smart contracts (Foundry)
-│   └── shared/           # Shared types & utilities
-├── scripts/              # Deployment & utility scripts
-├── ARCHITECTURE.md       # Detailed technical documentation
-├── DEPLOY.md             # Deployment guide
-└── README.md             # This file
+│   ├── frontend/          # React UI for game observation & spectator betting
+│   ├── agent/             # TypeScript AI poker agent
+│   ├── coordinator/       # WebSocket match coordination service
+│   ├── contracts/         # Solidity smart contracts (Foundry)
+│   │   └── src/
+│   │       ├── core/          # PokerGame, Escrow, Tournament, SpectatorBetting
+│   │       ├── interfaces/    # Contract interfaces
+│   │       ├── libraries/     # HandEvaluator, DeckUtils, CardConstants
+│   │       └── randomness/    # CommitReveal
+│   └── shared/            # Shared types & utilities
+├── docs/
+│   ├── API.md             # API documentation
+│   ├── SECURITY_AUDIT.md  # Security audit report
+│   └── AI_POKER_ARENA_ROADMAP.md  # Future roadmap
+├── scripts/
+│   └── start-backend.sh   # PM2 backend startup script
+├── ARCHITECTURE.md        # Detailed technical documentation
+├── DEPLOY.md              # Deployment guide (Vercel + Railway)
+├── Dockerfile             # Multi-stage Docker build
+├── ecosystem.config.cjs   # PM2 process configuration
+├── railway.json           # Railway deployment config
+└── README.md              # This file
 ```
 
 ## Features
 
 ### Smart Contracts
-- **PokerGame.sol**: Heads-up Texas Hold'em game logic
+- **PokerGame.sol** / **PokerGame4Max.sol**: Texas Hold'em game logic (2-4 players)
 - **Escrow.sol**: Secure wager handling and payouts
 - **Tournament.sol**: ELO rankings and leaderboard
 - **HandEvaluator.sol**: On-chain 7-card hand evaluation
-- **CommitReveal.sol**: Fair card randomness
+- **CommitReveal.sol**: Fair card randomness using commit-reveal
+- **SpectatorBetting.sol**: Third-party betting on game outcomes
 
 ### AI Agent
 - **Strategy Engine**: CFR-inspired preflop ranges + equity-based postflop play
@@ -61,9 +94,13 @@ poker-agent-monad/
 - **Opponent Modeling**: VPIP, PFR, AF tracking + player classification
 - **Bankroll Management**: Kelly Criterion + stop-loss protection
 
-## Quick Start
+### Frontend
+- Real-time game observation via WebSocket
+- Spectator betting interface
+- Leaderboard and ELO rankings
+- Wallet connection (WalletConnect)
 
-This guide will help you set up and run the project locally for development.
+## Quick Start
 
 ### Prerequisites
 
@@ -72,7 +109,7 @@ This guide will help you set up and run the project locally for development.
 | Node.js | >= 20 | Yes | Runtime for all packages |
 | pnpm | >= 9 | Yes | Package manager (monorepo) |
 | Foundry | Latest | Yes | Smart contract development |
-| Docker | Latest | No | Only needed for production deployment |
+| Docker | Latest | No | Only for production deployment |
 
 **Install pnpm** (if not already installed):
 ```bash
@@ -101,12 +138,14 @@ pnpm build
 
 ### Environment Setup
 
-The project requires environment variables for different packages. Copy the example files and configure them:
-
-#### 1. Root Environment (Backend Services)
+Copy the example environment files:
 
 ```bash
+# Root environment (backend services)
 cp .env.example .env
+
+# Frontend environment
+cp packages/frontend/.env.example packages/frontend/.env
 ```
 
 Edit `.env` with your configuration:
@@ -122,72 +161,17 @@ AGENT_PRIVATE_KEY_2=0x...  # Frost agent
 AGENT_PRIVATE_KEY_3=0x...  # Shadow agent
 AGENT_PRIVATE_KEY_4=0x...  # Viper agent
 
-# Contract Addresses (get these after deployment)
-POKER_GAME_ADDRESS=0x...
-ESCROW_ADDRESS=0x...
-TOURNAMENT_ADDRESS=0x...
+# Contract Addresses
+POKER_GAME_ADDRESS=0x9d4191980352547DcF029Ee1f6C6806E17ae2811
+ESCROW_ADDRESS=0x943473B2fF00482536BD6B64A650dF73A7dA3B04
+TOURNAMENT_ADDRESS=0x5658DC8fE47D27aBA44F9BAEa34D0Ab8b8566aaC
 
 # Coordinator Settings
 COORDINATOR_URL=ws://localhost:8080
 PORT=8080
-
-# Agent Settings (optional)
-AGENT_NAME=PokerBot001
-MAX_WAGER_PERCENT=5
-KELLY_FRACTION=0.25
 ```
 
-#### 2. Frontend Environment
-
-```bash
-cp packages/frontend/.env.example packages/frontend/.env
-```
-
-Edit `packages/frontend/.env`:
-
-```env
-# Blockchain RPC
-VITE_MONAD_RPC_URL=https://testnet-rpc.monad.xyz
-
-# Contract Addresses (same as root .env)
-VITE_POKER_GAME_ADDRESS=0x...
-VITE_ESCROW_ADDRESS=0x...
-
-# Coordinator WebSocket URL
-VITE_COORDINATOR_URL=ws://localhost:8080
-
-# WalletConnect Project ID (get from https://cloud.walletconnect.com)
-VITE_WALLETCONNECT_PROJECT_ID=your_project_id
-```
-
-### Deploy Smart Contracts
-
-Before running the agents, deploy the contracts to Monad testnet:
-
-```bash
-cd packages/contracts
-
-# Install Foundry dependencies
-forge install
-
-# Run tests (optional but recommended)
-forge test
-
-# Deploy to Monad testnet
-forge script script/Deploy.s.sol \
-  --rpc-url $MONAD_RPC_URL \
-  --private-key $AGENT_PRIVATE_KEY_1 \
-  --broadcast
-
-# Copy the deployed addresses to your .env files
-```
-
-Deployed addresses will be saved in:
-- `packages/contracts/broadcast/Deploy.s.sol/10143/run-latest.json`
-
-### Running Locally (Development)
-
-You can run each service independently for development:
+### Running Locally
 
 #### Option 1: Run Services Separately (Recommended for Development)
 
@@ -211,13 +195,77 @@ pnpm agent:start
 pnpm dev
 ```
 
-### Running with Docker (Production)
+### Deploy Smart Contracts
 
-Docker is **not required** for local development but is used for production deployment to Railway.
+```bash
+cd packages/contracts
 
-The `Dockerfile` creates a multi-stage build that runs:
-- 1 Coordinator service
-- 4 AI Agents (Blaze, Frost, Shadow, Viper) via PM2
+# Install Foundry dependencies
+forge install
+
+# Run tests
+forge test
+
+# Deploy to Monad testnet
+forge script script/Deploy.s.sol \
+  --rpc-url $MONAD_RPC_URL \
+  --private-key $AGENT_PRIVATE_KEY_1 \
+  --broadcast
+```
+
+## Available Scripts
+
+| Command | Description |
+|---------|-------------|
+| `pnpm install` | Install all dependencies |
+| `pnpm build` | Build all packages |
+| `pnpm dev` | Start all services in dev mode |
+| `pnpm frontend:dev` | Start frontend dev server |
+| `pnpm frontend:build` | Build frontend for production |
+| `pnpm frontend:preview` | Preview production build |
+| `pnpm coordinator:start` | Start coordinator service |
+| `pnpm coordinator:dev` | Start coordinator in dev mode |
+| `pnpm agent:start` | Start a single agent |
+| `pnpm agent:dev` | Start agent in dev mode |
+| `pnpm contracts:test` | Run smart contract tests |
+| `pnpm contracts:build` | Compile smart contracts |
+| `pnpm contracts:deploy` | Deploy smart contracts |
+
+## Strategy Overview
+
+### Preflop
+- Premium hands (AA-JJ, AKs): Raise 3x
+- Strong hands (TT-88, AQs-ATs): Raise 2.5x
+- Playable hands: Position-dependent opens
+- Trash: Fold (occasional steals from button)
+
+### Postflop
+- Strong made hands (65%+ equity): Value bet 0.66-0.75 pot
+- Drawing hands: Pot odds calculation
+- Weak hands: Check/fold, occasional bluffs (33% frequency)
+
+### Opponent Adaptation
+| Type | Description | Strategy |
+|------|-------------|----------|
+| **Fish** | Loose-passive | Value bet wide, never bluff |
+| **Nit** | Tight-passive | Bluff often, respect raises |
+| **LAG** | Loose-aggressive | Call down light |
+| **TAG** | Tight-aggressive | Play tight, respect action |
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [README.md](./README.md) | Quick start guide (this file) |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Detailed technical architecture |
+| [DEPLOY.md](./DEPLOY.md) | Deployment instructions (Vercel + Railway) |
+| [docs/API.md](./docs/API.md) | API documentation |
+| [docs/SECURITY_AUDIT.md](./docs/SECURITY_AUDIT.md) | Security audit report |
+| [docs/AI_POKER_ARENA_ROADMAP.md](./docs/AI_POKER_ARENA_ROADMAP.md) | Future roadmap |
+
+## Docker Deployment
+
+Docker is used for production deployment to Railway:
 
 ```bash
 # Build the Docker image
@@ -235,92 +283,23 @@ docker run -p 8080:8080 \
   poker-agent
 ```
 
-### Available Scripts
-
-| Command | Description |
-|---------|-------------|
-| `pnpm install` | Install all dependencies |
-| `pnpm build` | Build all packages |
-| `pnpm dev` | Start all services in dev mode |
-| `pnpm frontend:dev` | Start frontend dev server |
-| `pnpm coordinator:start` | Start the coordinator service |
-| `pnpm agent:start` | Start a single agent |
-| `pnpm contracts:test` | Run smart contract tests |
-| `pnpm contracts:build` | Compile smart contracts |
-
-### Verifying Your Setup
-
-1. **Frontend**: Open http://localhost:5173 - you should see the poker table UI
-2. **Coordinator**: Check terminal for "WebSocket server listening on port 8080"
-3. **Agents**: Check terminal for "Agent connected to coordinator"
-
-### Troubleshooting
+## Troubleshooting
 
 **Port already in use:**
 ```bash
-# Kill process on port 5173 (frontend)
-lsof -ti:5173 | xargs kill -9
-
-# Kill process on port 8080 (coordinator)
-lsof -ti:8080 | xargs kill -9
+lsof -ti:5173 | xargs kill -9  # Frontend
+lsof -ti:8080 | xargs kill -9  # Coordinator
 ```
 
-**pnpm not found after install:**
+**pnpm not found:**
 ```bash
-# Add pnpm to PATH
 export PATH="$HOME/.local/share/pnpm:$PATH"
 ```
 
 **Foundry commands not found:**
 ```bash
-# Re-run foundryup
 foundryup
 ```
-
-## Configuration Reference
-
-### Root Environment Variables (`.env`)
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `MONAD_RPC_URL` | Monad testnet RPC endpoint | Yes |
-| `MONAD_CHAIN_ID` | Chain ID (10143 for testnet) | Yes |
-| `AGENT_PRIVATE_KEY_1-4` | Private keys for each agent | Yes |
-| `POKER_GAME_ADDRESS` | Deployed PokerGame contract | Yes |
-| `ESCROW_ADDRESS` | Deployed Escrow contract | Yes |
-| `COORDINATOR_URL` | WebSocket URL for coordinator | Yes |
-| `PORT` | Coordinator server port | No (default: 8080) |
-| `MAX_WAGER_PERCENT` | Max % of bankroll per game | No (default: 5) |
-| `KELLY_FRACTION` | Kelly criterion fraction | No (default: 0.25) |
-
-### Frontend Environment Variables (`packages/frontend/.env`)
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `VITE_MONAD_RPC_URL` | Monad RPC for frontend | Yes |
-| `VITE_POKER_GAME_ADDRESS` | PokerGame contract address | Yes |
-| `VITE_ESCROW_ADDRESS` | Escrow contract address | Yes |
-| `VITE_COORDINATOR_URL` | Coordinator WebSocket URL | Yes |
-| `VITE_WALLETCONNECT_PROJECT_ID` | WalletConnect project ID | Yes |
-
-## Strategy Overview
-
-### Preflop
-- Premium hands (AA-JJ, AKs): Raise 3x
-- Strong hands (TT-88, AQs-ATs): Raise 2.5x
-- Playable hands: Position-dependent opens
-- Trash: Fold (occasional steals from button)
-
-### Postflop
-- Strong made hands (65%+ equity): Value bet 0.66-0.75 pot
-- Drawing hands: Pot odds calculation
-- Weak hands: Check/fold, occasional bluffs (33% frequency)
-
-### Opponent Adaptation
-- **Fish** (loose-passive): Value bet wide, never bluff
-- **Nit** (tight-passive): Bluff often, respect raises
-- **LAG** (loose-aggressive): Call down light
-- **TAG** (tight-aggressive): Play tight, respect action
 
 ## Success Criteria
 
@@ -329,27 +308,9 @@ foundryup
 - [x] Make strategic decisions based on game state
 - [x] Opponent behavior tracking
 - [x] Bankroll management
+- [x] Spectator betting system
 - [ ] Complete 5+ matches against different opponents
 - [ ] Maintain positive/neutral win rate
-
-## Development
-
-```bash
-# Run contract tests
-pnpm contracts:test
-
-# Run agent in dev mode
-pnpm agent:dev
-
-# Build specific package
-pnpm --filter @poker/agent build
-```
-
-## Documentation
-
-- **[README.md](./README.md)** - Quick start guide (this file)
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Detailed technical architecture
-- **[DEPLOY.md](./DEPLOY.md)** - Deployment instructions
 
 ## License
 
@@ -357,9 +318,9 @@ MIT
 
 ## Hackathon
 
-Built for **Moltiverse Hackathon** (Feb 2-18, 2026)
-- Track: Game Arena Agent ($10,000 bounty)
-- Chain: Monad Blockchain
+Built for **Moltiverse Hackathon 2026** (Feb 2-18, 2026)
+- **Track:** Game Arena Agent ($10,000 bounty)
+- **Chain:** Monad Blockchain
 
 ---
 
