@@ -1189,6 +1189,7 @@ async function start() {
         if (readyAgent) {
           const balance = BigInt(data.balance || "0");
           const maxWager = BigInt(data.maxWager || "0");
+          readyAgent.balance = balance;
           addToMatchmakingQueue(readyAgent, balance, maxWager);
           socket.send(
             JSON.stringify({ type: "queued", queueSize: matchmakingQueue.length }),

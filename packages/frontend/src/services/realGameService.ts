@@ -633,7 +633,9 @@ class RealGameService {
         // Record game result to stats store
         // Always try to record, even if we don't have full game info
         try {
-          const winnerId = getOrCreateAgentId(message.winner);
+          const winnerId = message.winnerName
+            ? (message.winnerName.toLowerCase() as AgentId)
+            : getOrCreateAgentId(message.winner);
           const completedAt = message.completedAt || Date.now();
 
           // Use tracked game info if available, otherwise use defaults

@@ -135,7 +135,7 @@ export function ArenaAgentSelect({
       )}
 
       {/* Agent Roster */}
-      <div className="px-3 py-3">
+      <div className="px-3 py-3 max-h-[260px] overflow-y-auto">
         {!gameInProgress && (
           <div className="text-xs text-gray-400 font-semibold uppercase tracking-wider mb-2 px-1">
             Choose {MIN_AGENTS}–{MAX_AGENTS} Agents
